@@ -1,0 +1,82 @@
+/* Motion and semantic-zoom policy lives beside the graph so the expensive
+   presentation can be suspended without changing authored atlas data. */
+.atlas-graph.is-navigating *,
+.atlas-graph.is-node-dragging * {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
+}
+
+.atlas-graph.is-navigating :is(
+  .region-frame__titlebar,
+  .landmark-node__shape,
+  .map-context-menu
+),
+.atlas-graph.is-node-dragging :is(
+  .region-frame__titlebar,
+  .landmark-node__shape
+) {
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+.atlas-graph.is-navigating :is(
+  .landmark-node__detail,
+  .landmark-node__semantic-detail,
+  .landmark-node__document-border,
+  .react-flow__edge-textwrapper
+),
+.atlas-graph.is-node-dragging :is(
+  .landmark-node__detail,
+  .landmark-node__semantic-detail,
+  .landmark-node__document-border,
+  .react-flow__edge-textwrapper
+) {
+  visibility: hidden;
+}
+
+.atlas-graph.is-zoom-far .landmark-node__detail,
+.atlas-graph.is-zoom-far .landmark-node__semantic-detail,
+.atlas-graph.is-zoom-far .landmark-node__document-border,
+.atlas-graph.is-zoom-far .atlas-port,
+.atlas-graph.is-zoom-far .react-flow__edge-textwrapper {
+  visibility: hidden;
+}
+
+.atlas-graph.is-zoom-far .landmark-node__content {
+  opacity: .78;
+}
+
+.atlas-graph.is-zoom-mid .atlas-port,
+.atlas-graph.is-zoom-mid .react-flow__edge-textwrapper {
+  visibility: hidden;
+}
+
+.atlas-graph .react-flow__edge.is-incident-hover .react-flow__edge-path {
+  opacity: 1 !important;
+  stroke-width: 2.35 !important;
+}
+
+.atlas-graph.has-hovered-node .react-flow__edge:not(.is-incident-hover, .selected) {
+  opacity: .3;
+}
+
+.atlas-graph.is-connecting .react-flow__node:hover :is(
+  .landmark-node__shape,
+  .region-frame__shape
+) {
+  stroke-width: 2.25;
+}
+
+.atlas-graph.is-node-dragging .react-flow__node.dragging {
+  cursor: url("/cursors/grabbing.svg") 14 14, grabbing !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-graph *,
+  .atlas-graph *::before,
+  .atlas-graph *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
+}

@@ -1,0 +1,56 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+*.tsbuildinfo
+
+# Private local note library and all derived state. The application creates this
+# directory on first use; note bodies, assets, backups, trash, and atlas state
+# must never be published.
+/content/
+
+# Legacy snapshots and one-subject import tooling derived from the private
+# library. Public defaults and test fixtures use separate synthetic files.
+/src/data/atlas.snapshot.json
+/src/data/*-*.snapshot.json
+/scripts/import-*.mjs
+/scripts/verify-imported-vault.mjs
+
+# Raw local evidence can contain note text, filenames, or desktop captures.
+/docs/screenshots/
+/docs/conversations/
+
+# Local processes and test output.
+/.runtime/
+/coverage/
+/playwright-report/
+/test-results/
+
+# Local configuration, credentials, and signing material.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

@@ -1,0 +1,159 @@
+{
+  "subjects": [
+    {
+      "id": "synthetic-field",
+      "title": "Synthetic Field",
+      "shortTitle": "Fixture",
+      "description": "Fictional data used only by the public test suite.",
+      "accent": "#2855A6",
+      "tint": "#E8EFFA",
+      "landmarkCount": 3
+    }
+  ],
+  "regions": [
+    {
+      "id": "fixture-region-examples",
+      "title": "Example collection",
+      "subjectId": "synthetic-field",
+      "description": "A synthetic parent region."
+    },
+    {
+      "id": "fixture-region-details",
+      "title": "Example details",
+      "subjectId": "synthetic-field",
+      "parentId": "fixture-region-examples",
+      "description": "A synthetic child region."
+    }
+  ],
+  "landmarks": [
+    {
+      "id": "fixture-orchid-lemma",
+      "title": "Orchid lemma",
+      "kind": "lemma",
+      "subjectIds": [
+        "synthetic-field"
+      ],
+      "regionId": "fixture-region-details",
+      "summary": "A fictional margin example for public interaction tests.",
+      "markdown": "# Orchid lemma\n\nSynthetic fixture text with no source note.",
+      "statement": "This public fixture statement is intentionally invented.",
+      "tags": [
+        "margin",
+        "fixture"
+      ],
+      "status": "canonical",
+      "mastery": {
+        "state": 1,
+        "explain": 1,
+        "derive": 0,
+        "apply": 0
+      },
+      "contentPath": "content/Synthetic Field/Public Examples/Fixture Collection/Public Fixture Note Alpha.md"
+    },
+    {
+      "id": "fixture-azure-corollary",
+      "title": "Azure corollary",
+      "kind": "corollary",
+      "subjectIds": [
+        "synthetic-field"
+      ],
+      "regionId": "fixture-region-details",
+      "summary": "A second fictional margin example for public interaction tests.",
+      "markdown": "# Azure corollary\n\nSynthetic fixture text with no source note.",
+      "statement": "This is the public fixture's second invented statement.",
+      "tags": [
+        "margin",
+        "fixture"
+      ],
+      "status": "draft",
+      "mastery": {
+        "state": 1,
+        "explain": 0,
+        "derive": 0,
+        "apply": 0
+      },
+      "contentPath": "content/Synthetic Field/Public Examples/Fixture Collection/Public Fixture Note Beta.md"
+    },
+    {
+      "id": "fixture-kernel-example",
+      "title": "Kernel example",
+      "kind": "example",
+      "subjectIds": [
+        "synthetic-field"
+      ],
+      "regionId": "fixture-region-details",
+      "summary": "A synthetic search target for the public interaction tests.",
+      "markdown": "# Kernel example\n\nSynthetic fixture text with no source note.",
+      "tags": [
+        "kernel",
+        "fixture"
+      ],
+      "status": "draft",
+      "mastery": {
+        "state": 0,
+        "explain": 0,
+        "derive": 0,
+        "apply": 0
+      }
+    }
+  ],
+  "placements": [
+    {
+      "landmarkId": "fixture-orchid-lemma",
+      "x": 120,
+      "y": 240
+    },
+    {
+      "landmarkId": "fixture-azure-corollary",
+      "x": 420,
+      "y": 80
+    },
+    {
+      "landmarkId": "fixture-kernel-example",
+      "x": 720,
+      "y": 160
+    }
+  ],
+  "connections": [
+    {
+      "id": "fixture-connection-orchid-azure",
+      "source": "fixture-orchid-lemma",
+      "target": "fixture-azure-corollary",
+      "kind": "implies",
+      "label": "synthetic implication"
+    }
+  ],
+  "trails": [
+    {
+      "id": "fixture-trail-public-example",
+      "title": "Public example trail",
+      "kind": "learning",
+      "subjectId": "synthetic-field",
+      "description": "A short fictional trail for validating graph references.",
+      "estimatedMinutes": 2,
+      "steps": [
+        {
+          "landmarkId": "fixture-orchid-lemma",
+          "prompt": "Read the synthetic lemma."
+        },
+        {
+          "landmarkId": "fixture-azure-corollary",
+          "prompt": "Follow its synthetic consequence."
+        }
+      ]
+    }
+  ],
+  "importReport": {
+    "generatedAt": "1970-01-01T00:00:00.000Z",
+    "sourceVault": "synthetic-public-fixture",
+    "canvasPath": "synthetic-public-fixture.canvas",
+    "scannedMarkdown": 3,
+    "importedLandmarks": 3,
+    "importedConnections": 1,
+    "unplacedNotes": 0,
+    "encodingWarnings": 0,
+    "notes": [
+      "This fixture is invented and contains no user-authored note content."
+    ]
+  }
+}

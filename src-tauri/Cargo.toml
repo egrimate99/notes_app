@@ -1,0 +1,28 @@
+[package]
+name = "math-atlas"
+version = "0.1.0"
+description = "A local-first spatial mathematics learning atlas"
+authors = ["Mate"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# Math Atlas is a Windows desktop application.  Keeping the host as an rlib is
+# sufficient for the small binary in `src/main.rs` and avoids producing an
+# enormous, unused exported DLL when the project is checked with MinGW.
+name = "math_atlas_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }

@@ -1,0 +1,2247 @@
+:root {
+  color: #15171a;
+  background: #ffffff;
+  font-family: ui-sans-serif, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --font-ui: ui-sans-serif, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-math: "Times New Roman", Times, "Cambria Math", serif;
+  --font-note: "Aptos", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --canvas: #ffffff;
+  --ui-chrome: #f4f6f7;
+  --ui-chrome-raised: #fafbfc;
+  --ui-surface: #ffffff;
+  --ui-surface-muted: #f1f3f5;
+  --ui-hover: #e9edf0;
+  --ui-active: #dfe4e8;
+  --ui-ink: #15171a;
+  --ui-ink-secondary: #4d555e;
+  --ui-ink-muted: #626b75;
+  --ui-ink-faint: #7d8690;
+  --ui-border-soft: #dce0e4;
+  --ui-border: #cbd1d7;
+  --ui-border-strong: #858e98;
+  --ui-focus: #111418;
+  --ui-accent: #202833;
+  --ui-accent-soft: #e4e8ec;
+  --ui-danger: #b42318;
+  --panel-resizer-size: 6px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  min-width: 760px;
+  min-height: 520px;
+  background: var(--canvas);
+  color: var(--ui-ink);
+  cursor: url("/cursors/pointer.svg") 4 3, default;
+}
+
+/* Portrait and high-DPI monitor work areas must never inherit workspace floors. */
+body:has(.app-shell[data-desktop-surface="active"]) {
+  min-width: 0;
+  min-height: 0;
+}
+
+button,
+input,
+textarea,
+select {
+  border-radius: 0;
+  font: inherit;
+}
+
+button,
+label[for],
+input[type="color"] {
+  cursor: url("/cursors/pointer.svg") 4 3, pointer;
+}
+
+input[type="text"],
+input[type="search"],
+input[type="number"],
+textarea,
+[contenteditable="true"],
+.cm-content {
+  cursor: url("/cursors/text.svg") 12 12, text;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[contenteditable="true"]:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(53, 101, 164, .2);
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* Workspace shell */
+.app-shell {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  min-width: 0;
+  background: var(--canvas);
+  font-family: var(--font-ui);
+}
+
+.file-sidebar,
+.inspector-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--ui-ink);
+}
+
+.file-sidebar {
+  grid-column: 1;
+  background: var(--ui-chrome);
+}
+
+.file-sidebar__message,
+.inspector-file-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--ui-danger);
+  background: #fff8f7;
+  color: #8f1b13;
+  font: 500 12px/1.4 var(--font-ui);
+}
+
+.file-refresh-button,
+.panel-hide,
+.sidebar-restore {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ui-ink-secondary);
+}
+
+.file-refresh-button:hover,
+.panel-hide:hover,
+.sidebar-restore:hover {
+  border-color: var(--ui-border);
+  background: var(--ui-hover);
+  color: var(--ui-ink);
+}
+
+.file-refresh-button:disabled {
+  opacity: .35;
+}
+
+.workspace-shell {
+  grid-column: 3;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-content {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+
+.atlas-workspace {
+  grid-column: 1;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--canvas);
+}
+
+/* Search is a command, not a permanent toolbar. */
+.search-bar {
+  position: absolute;
+  z-index: 90;
+  top: 9px;
+  left: 9px;
+  height: 32px;
+  display: flex;
+  align-items: stretch;
+  pointer-events: none;
+}
+
+.atlas-search-trigger {
+  position: relative;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--ui-border-strong);
+  background: rgba(250, 251, 252, .96);
+  color: var(--ui-ink);
+  box-shadow: 0 2px 8px rgba(22, 27, 34, .08);
+  pointer-events: auto;
+}
+
+.atlas-search-trigger:hover,
+.search-bar.is-expanded .atlas-search-trigger {
+  border-color: var(--ui-ink);
+  background: var(--ui-surface);
+}
+
+.atlas-search {
+  width: 0;
+  height: 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  overflow: hidden;
+  margin-left: -1px;
+  border: 1px solid var(--ui-border-strong);
+  border-left-color: transparent;
+  background: rgba(255, 255, 255, .98);
+  opacity: 0;
+  box-shadow: 0 6px 18px rgba(22, 27, 34, .12);
+  pointer-events: none;
+  transition: width 130ms ease, opacity 90ms ease;
+}
+
+.search-bar.is-expanded .atlas-search {
+  width: min(268px, 34vw);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.atlas-search input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ui-ink);
+  font: 500 12.5px/1 var(--font-ui);
+}
+
+.atlas-search-count {
+  min-width: 22px;
+  color: var(--ui-ink-faint);
+  font: 650 10px/1 var(--font-ui);
+  text-align: center;
+}
+
+.atlas-search-clear {
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-ink-secondary);
+}
+
+.atlas-search-clear:hover {
+  background: var(--ui-hover);
+  color: var(--ui-ink);
+}
+
+/* Resizable panes */
+.panel-resizer {
+  position: relative;
+  z-index: 100;
+  min-width: var(--panel-resizer-size);
+  outline: none;
+  touch-action: none;
+  background: var(--ui-chrome);
+  cursor: col-resize;
+}
+
+.panel-resizer--file-sidebar,
+.panel-resizer--inspector {
+  grid-column: 2;
+}
+
+.panel-resizer::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--ui-border);
+  transform: translateX(-.5px);
+}
+
+.panel-resizer:hover::after,
+.panel-resizer:focus-visible::after,
+.panel-resizer[data-resizing="true"]::after {
+  width: 2px;
+  background: var(--ui-ink);
+}
+
+.panel-resizer__grip {
+  display: none;
+}
+
+html[data-panel-resizing] {
+  cursor: col-resize;
+  user-select: none;
+}
+
+html[data-panel-resizing] iframe {
+  pointer-events: none;
+}
+
+.sidebar-restore {
+  position: absolute;
+  z-index: 110;
+  top: 48px;
+  width: 21px;
+  height: 30px;
+  border-color: var(--ui-border-strong);
+  background: rgba(250, 251, 252, .96);
+  box-shadow: 0 2px 7px rgba(22, 27, 34, .08);
+}
+
+.sidebar-restore--left {
+  left: 0;
+  border-left: 0;
+}
+
+.sidebar-restore--right {
+  right: 0;
+  border-right: 0;
+}
+
+.atlas-sync-alert {
+  position: absolute;
+  z-index: 120;
+  left: 50%;
+  bottom: 10px;
+  max-width: min(460px, calc(100% - 180px));
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--ui-danger);
+  background: rgba(255, 249, 248, .98);
+  color: #851b14;
+  box-shadow: 0 5px 16px rgba(68, 20, 17, .12);
+  font: 550 11.5px/1.35 var(--font-ui);
+  transform: translateX(-50%);
+}
+
+.atlas-sync-alert button {
+  width: 29px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+}
+
+.atlas-sync-alert button:hover {
+  border-color: currentColor;
+  background: #ffffff;
+}
+
+/* Note pane */
+#note-sidebar {
+  grid-column: 3;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 0;
+  background: var(--ui-surface);
+}
+
+#note-sidebar > .inspector-panel {
+  width: 100%;
+  height: 100%;
+}
+
+.inspector-panel {
+  position: relative;
+  background: var(--ui-surface);
+}
+
+.inspector-scroll {
+  height: 100%;
+  overflow: auto;
+  padding: 0 28px 72px;
+  scrollbar-color: var(--ui-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.inspector-header {
+  position: sticky;
+  z-index: 12;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  margin: 0 -28px 28px;
+  padding: 10px 10px 10px 28px;
+  border-bottom: 1px solid var(--ui-border);
+  background: rgba(250, 251, 252, .97);
+  backdrop-filter: blur(8px);
+}
+
+.inspector-header h2 {
+  max-width: calc(100% - 38px);
+  margin: 0;
+  overflow: hidden;
+  color: var(--ui-ink);
+  font: 600 18px/1.2 var(--font-math);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-header--titleless {
+  justify-content: flex-end;
+  min-height: 34px;
+  margin-bottom: 12px;
+  padding-block: 5px;
+}
+
+.inspector-panel--empty {
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: var(--ui-chrome-raised);
+  color: var(--ui-ink-muted);
+  font: 500 12.5px/1.5 var(--font-ui);
+}
+
+.inspector-panel--empty p {
+  max-width: 220px;
+  text-align: center;
+}
+
+.inspector-panel--empty .panel-hide {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+}
+
+.inspector-file-error {
+  margin: 0 0 16px;
+}
+
+/* Canvas */
+.atlas-graph,
+.atlas-graph-loading {
+  position: absolute;
+  inset: 0;
+  background: var(--canvas);
+}
+
+.atlas-graph-loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px;
+  border: 1px solid var(--ui-border);
+  border-top-color: var(--ui-ink);
+  border-radius: 50%;
+  animation: spin .65s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.is-spinning {
+  animation: spin .65s linear infinite;
+}
+
+.atlas-graph .react-flow,
+.atlas-graph .react-flow__renderer,
+.atlas-graph .react-flow__pane {
+  background: transparent;
+}
+
+.atlas-graph .react-flow__background {
+  background: var(--canvas);
+}
+
+.atlas-graph .react-flow__background pattern circle {
+  fill: #111418;
+}
+
+.atlas-graph .react-flow__pane {
+  cursor: url("/cursors/pointer.svg") 4 2, default;
+}
+
+.atlas-graph .react-flow__pane.dragging {
+  cursor: url("/cursors/grabbing.svg") 10 10, grabbing;
+}
+
+.atlas-graph.is-note-drag-over::after {
+  content: "";
+  position: absolute;
+  z-index: 72;
+  inset: 8px;
+  border: 1px solid var(--ui-ink);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .9);
+  pointer-events: none;
+}
+
+.atlas-graph.is-note-drag-over .react-flow__pane {
+  cursor: copy;
+}
+
+.canvas-note-drop-cue {
+  position: absolute;
+  z-index: 82;
+  top: 12px;
+  left: 50%;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-ink);
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 4px 12px rgba(22, 27, 34, .12);
+  color: var(--ui-ink);
+  font: 650 11.5px/1 var(--font-ui);
+  letter-spacing: .005em;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.atlas-graph .react-flow__node-landmark {
+  cursor: url("/cursors/move.svg") 14 14, move;
+  /* The wrapper is rectangular even when the landmark is not. Pointer
+     ownership is delegated to the exact SVG silhouette below, so the empty
+     corners of an oval/triangle cannot drag an object behind the cursor. */
+  pointer-events: none !important;
+}
+
+.atlas-graph .react-flow__node-landmark:active {
+  cursor: url("/cursors/grabbing.svg") 10 10, grabbing;
+}
+
+.atlas-graph .react-flow__node-region {
+  pointer-events: none !important;
+}
+
+/* XYFlow's post-marquee selection rectangle is itself a draggable, focusable
+   surface spanning the whole selected bounding box. In a spatial notebook it
+   can cover unrelated groups/landmarks and become a second, non-persisted drag
+   owner. Keep the selection, but let direct object surfaces own all gestures. */
+.atlas-graph .react-flow__nodesselection-rect {
+  pointer-events: none !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.atlas-graph .react-flow__edges,
+.atlas-graph .react-flow__nodes {
+  z-index: auto;
+}
+
+.atlas-graph .react-flow__edge {
+  pointer-events: stroke;
+}
+
+.atlas-graph .react-flow__edge-path {
+  shape-rendering: geometricPrecision;
+}
+
+.atlas-graph .react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 2px !important;
+}
+
+.atlas-graph .react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 2.25px !important;
+}
+
+/* Selected relations expose restrained, full-size reconnect targets. React
+   Flow places each circle just outside the node with its inner tangent exactly
+   on the path endpoint, so the grip stays clickable without covering content. */
+.atlas-graph .react-flow__edge.selected .react-flow__edgeupdater {
+  fill: #ffffff;
+  fill-opacity: .94;
+  stroke: var(--ui-ink);
+  stroke-width: 1.2px;
+  vector-effect: non-scaling-stroke;
+  cursor: url("/cursors/link.svg") 14 14, crosshair;
+  transition: fill 80ms ease, stroke-width 80ms ease;
+}
+
+.atlas-graph .react-flow__edge.selected .react-flow__edgeupdater:hover {
+  fill: var(--ui-ink);
+  stroke-width: 1.8px;
+}
+
+.atlas-graph .react-flow__edge.is-search-context .react-flow__edge-textwrapper {
+  opacity: .28;
+}
+
+.atlas-graph .react-flow__edge.is-search-muted .react-flow__edge-textwrapper {
+  opacity: .08;
+}
+
+.atlas-graph .react-flow__edge.is-search-match .react-flow__edge-textwrapper,
+.atlas-graph .react-flow__edge.selected .react-flow__edge-textwrapper {
+  opacity: 1;
+}
+
+.atlas-graph .react-flow__edge-textbg {
+  stroke: var(--ui-border-strong);
+  stroke-width: 1;
+}
+
+.atlas-graph.is-overview .react-flow__edge-textwrapper,
+.atlas-graph.is-overview .atlas-port {
+  opacity: 0;
+  pointer-events: none !important;
+}
+
+/* At overview scale a resize contour can be wider on screen than the object
+   it surrounds. Reserve that scale for selecting/moving/navigating instead of
+   letting an invisible resize band consume every click. */
+.atlas-graph.is-overview :is(.landmark-node__resize-target, .region-frame__hit-target) {
+  pointer-events: none !important;
+}
+
+.canvas-nav {
+  position: absolute;
+  z-index: 80;
+  left: 9px;
+  bottom: 9px;
+  display: grid;
+  grid-auto-flow: column;
+  gap: 0;
+  border: 1px solid var(--ui-border-strong);
+  background: rgba(250, 251, 252, .96);
+  box-shadow: 0 3px 10px rgba(22, 27, 34, .1);
+}
+
+.canvas-nav button {
+  width: 31px;
+  height: 31px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--ui-border);
+  background: transparent;
+  color: var(--ui-ink-secondary);
+}
+
+.canvas-nav button:first-child {
+  border-left: 0;
+}
+
+.canvas-nav button:hover:not(:disabled) {
+  background: var(--ui-hover);
+  color: var(--ui-ink);
+}
+
+.canvas-nav button:disabled {
+  opacity: .3;
+}
+
+/* Native desktop canvas affordances share the canvas toolbar's visual weight,
+   but stay outside the graph so the browser build pays no interaction cost. */
+.desktop-surface-launcher {
+  position: absolute;
+  z-index: 84;
+  left: 142px;
+  bottom: 9px;
+  width: 31px;
+  height: 31px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--ui-border-strong);
+  background: rgba(250, 251, 252, .96);
+  color: var(--ui-ink-secondary);
+  box-shadow: 0 3px 10px rgba(22, 27, 34, .1);
+}
+
+.desktop-surface-launcher:hover:not(:disabled) {
+  border-color: var(--ui-ink);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
+}
+
+.desktop-surface-launcher:disabled,
+.desktop-surface-capsule button:disabled {
+  opacity: .38;
+}
+
+.desktop-surface-capsule {
+  position: absolute;
+  z-index: 140;
+  top: 0;
+  left: 50%;
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--ui-border-strong);
+  border-top: 0;
+  background: rgba(250, 251, 252, .91);
+  box-shadow: 0 2px 8px rgba(22, 27, 34, .09);
+  opacity: .62;
+  transform: translateX(-50%);
+  transition: opacity 100ms ease;
+  backdrop-filter: blur(7px);
+}
+
+.desktop-surface-capsule:hover,
+.desktop-surface-capsule:focus-within,
+.desktop-surface-capsule[data-chrome-visible="true"] {
+  opacity: 1;
+}
+
+.desktop-surface-capsule button {
+  width: 28px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--ui-border);
+  background: transparent;
+  color: var(--ui-ink-secondary);
+}
+
+.desktop-surface-capsule button:first-child {
+  border-left: 0;
+}
+
+.desktop-surface-capsule button:hover:not(:disabled) {
+  background: var(--ui-hover);
+  color: var(--ui-ink);
+}
+
+.desktop-surface-alert {
+  top: 34px;
+  bottom: auto;
+}
+
+/* Landmarks */
+.landmark-node {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  color: var(--ui-ink);
+  isolation: isolate;
+  font-family: var(--font-math);
+  pointer-events: none;
+  --landmark-surface: #ffffff;
+}
+
+.landmark-node__frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  shape-rendering: geometricPrecision;
+}
+
+.landmark-node__shape {
+  fill: #ffffff;
+  stroke: var(--topic-color, #343a40);
+  stroke-width: 1.45;
+  vector-effect: non-scaling-stroke;
+  transition: fill 100ms ease, stroke-width 100ms ease;
+}
+
+.landmark-node:hover .landmark-node__shape {
+  fill: color-mix(in srgb, var(--topic-color, #343a40) 3%, #ffffff);
+  stroke-width: 1.9;
+}
+
+.landmark-node:hover {
+  --landmark-surface: color-mix(in srgb, var(--topic-color, #343a40) 3%, #ffffff);
+}
+
+.landmark-node.is-selected .landmark-node__shape {
+  fill: color-mix(in srgb, var(--topic-color, #343a40) 4%, #ffffff);
+  stroke-width: 1.8;
+}
+
+.landmark-node.is-selected {
+  --landmark-surface: color-mix(in srgb, var(--topic-color, #343a40) 4%, #ffffff);
+}
+
+/* The open file is a navigation cue, not an operational canvas selection.
+   Keep it recognizable without making Delete or multi-drag look armed. */
+.landmark-node.is-file-emphasized .landmark-node__shape {
+  fill: color-mix(in srgb, var(--topic-color, #343a40) 2%, #ffffff);
+  stroke-width: 1.7;
+}
+
+.landmark-node.is-file-emphasized:not(.is-selected) {
+  --landmark-surface: color-mix(in srgb, var(--topic-color, #343a40) 2%, #ffffff);
+}
+
+.landmark-node.is-file-emphasized .landmark-node__selection-ring,
+.landmark-node.is-file-emphasized .landmark-node__selection-outer {
+  stroke-width: 1.35;
+  stroke-dasharray: 4 3;
+  opacity: .68;
+}
+
+.landmark-node.is-file-emphasized .landmark-node__selection-halo {
+  stroke-width: 4;
+  opacity: .9;
+}
+
+/* Search preserves the map as context: unmatched objects recede without
+   unmounting, while matches retain full-contrast mathematical typography. */
+.landmark-node.is-search-muted {
+  opacity: .22;
+}
+
+.landmark-node.is-search-muted.is-selected {
+  opacity: .62;
+}
+
+.landmark-node.is-search-match .landmark-node__shape {
+  fill: color-mix(in srgb, var(--topic-color, #343a40) 8%, #ffffff);
+  stroke-width: 2.2;
+}
+
+.landmark-node.is-search-match {
+  --landmark-surface: color-mix(in srgb, var(--topic-color, #343a40) 8%, #ffffff);
+}
+
+.landmark-node.is-search-match .landmark-node__content span {
+  color: #0b0d0f;
+  font-weight: 700;
+}
+
+.landmark-node__detail {
+  fill: none;
+  stroke: var(--topic-color, #343a40);
+  stroke-width: .75;
+  opacity: .34;
+  pointer-events: none;
+  transition: opacity 100ms ease;
+}
+
+.landmark-node__semantic-detail {
+  fill: none;
+  stroke: var(--topic-color, #343a40);
+  stroke-width: 1;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  opacity: .72;
+  pointer-events: none;
+}
+
+/* Rich landmarks use the mathematical-note convention of a double rule. All
+   three strokes share the exact visible contour, so no decoration can cross a
+   theorem, equation, or Markdown body—even for diagonal and curved shapes. */
+.landmark-node__document-border {
+  fill: none;
+  pointer-events: none;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.landmark-node__document-border--outer {
+  stroke: var(--topic-color, #343a40);
+  stroke-width: 5.4;
+  opacity: .48;
+}
+
+.landmark-node__document-border--gap {
+  stroke: var(--landmark-surface, #ffffff);
+  stroke-width: 3.25;
+  opacity: 1;
+}
+
+.landmark-node__semantic-detail.landmark-node__document-border--inner {
+  stroke: var(--topic-color, #343a40);
+  stroke-width: 1.05;
+  opacity: .92;
+}
+
+.landmark-node--kind-theorem .landmark-node__semantic-detail,
+.landmark-node--kind-definition .landmark-node__semantic-detail {
+  stroke-width: 1.15;
+  opacity: .9;
+}
+
+.landmark-node--kind-example .landmark-node__semantic-detail,
+.landmark-node--kind-source .landmark-node__semantic-detail {
+  opacity: .55;
+}
+
+/* Informal Notes are loose pieces of working paper, deliberately outside the
+   framed grammar used by definitions, theorems, and other formal statements. */
+.landmark-node--informal-note .landmark-node__shape {
+  fill: #f7f3e9;
+  stroke: color-mix(in srgb, var(--topic-color, #343a40) 36%, #6b655d);
+  stroke-width: 1.45;
+}
+
+.landmark-node--informal-note :is(.landmark-node__detail, .landmark-node__semantic-detail) {
+  display: none;
+}
+
+.landmark-node--informal-note::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 4px -3px -4px 3px;
+  background: rgba(46, 40, 34, .13);
+  pointer-events: none;
+}
+
+.landmark-node--informal-note.landmark-node--rectangle::after {
+  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
+}
+
+.landmark-node--informal-note.landmark-node--oval::after { border-radius: 50%; }
+.landmark-node--informal-note.landmark-node--hexagon::after { clip-path: polygon(12% 0, 88% 0, 100% 50%, 88% 100%, 12% 100%, 0 50%); }
+.landmark-node--informal-note.landmark-node--octagon::after { clip-path: polygon(8% 0, 92% 0, 100% 18%, 100% 82%, 92% 100%, 8% 100%, 0 82%, 0 18%); }
+.landmark-node--informal-note.landmark-node--rhombus::after { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.landmark-node--informal-note.landmark-node--triangle::after { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.landmark-node--informal-note.landmark-node--parallelogram::after { clip-path: polygon(10% 0, 100% 0, 90% 100%, 0 100%); }
+
+.landmark-node__paper-fold {
+  fill: color-mix(in srgb, var(--topic-color, #343a40) 10%, #dfd5c7);
+  stroke: color-mix(in srgb, var(--topic-color, #343a40) 36%, #6b655d);
+  stroke-width: 1.15;
+  stroke-linejoin: miter;
+  pointer-events: none;
+}
+
+.landmark-node--informal-note:hover .landmark-node__shape {
+  fill: color-mix(in srgb, var(--topic-color, #343a40) 3%, #fbf8f1);
+  stroke-width: 1.9;
+}
+
+.landmark-node--informal-note.is-selected .landmark-node__shape {
+  fill: color-mix(in srgb, var(--topic-color, #343a40) 5%, #f8f3e9);
+  stroke-width: 1.9;
+}
+
+.landmark-node--informal-note.is-search-match .landmark-node__shape {
+  fill: color-mix(in srgb, var(--topic-color, #343a40) 7%, #f8f3e9);
+  stroke-width: 2.2;
+}
+
+.landmark-node:hover .landmark-node__detail,
+.landmark-node.is-selected .landmark-node__detail {
+  opacity: .72;
+}
+
+.landmark-node__resize-target {
+  pointer-events: stroke;
+}
+
+.landmark-node__move-target {
+  pointer-events: fill;
+  cursor: url("/cursors/move.svg") 14 14, move;
+}
+
+.landmark-node__selection-halo,
+.region-frame__selection-halo {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 7;
+  vector-effect: non-scaling-stroke;
+}
+
+.landmark-node__selection-ring,
+.region-frame__selection-ring,
+.landmark-node__selection-outer,
+.region-frame__selection-outer {
+  fill: none;
+  stroke: var(--topic-color, var(--ui-focus));
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+/* A landmark can carry a strong focus contour; applying the same weight to a
+   monitor-sized territory turns selection into a black wall across the map. */
+.region-frame__selection-halo {
+  stroke-width: 5;
+}
+
+.region-frame__selection-ring,
+.region-frame__selection-outer {
+  stroke-width: 1.6;
+}
+
+.landmark-node__content {
+  position: absolute;
+  inset: 8px 17px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.landmark-node__content h3,
+.landmark-node__content span {
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0;
+  color: var(--ui-ink);
+  font: 650 var(--landmark-title-size, 16px)/1.16 var(--font-math);
+  overflow-wrap: break-word;
+  word-break: normal;
+  text-wrap: balance;
+}
+
+.landmark-node--informal-note .landmark-node__content span {
+  color: #171717;
+  font-family: var(--font-note);
+  font-weight: 650;
+  letter-spacing: -.012em;
+}
+
+.landmark-node--oval .landmark-node__content {
+  inset-inline: 24px;
+}
+
+.landmark-node--oval .landmark-node__content span {
+  font-variant-caps: small-caps;
+  letter-spacing: .025em;
+}
+
+.landmark-node--hexagon .landmark-node__content {
+  inset: 12px 30px;
+  border-top: 1px solid color-mix(in srgb, var(--topic-color) 38%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--topic-color) 38%, transparent);
+}
+
+.landmark-node--octagon .landmark-node__content {
+  inset: 10px 20px;
+}
+
+.landmark-node--octagon .landmark-node__content span {
+  letter-spacing: .018em;
+}
+
+.landmark-node--rhombus .landmark-node__content {
+  inset: 18% 26%;
+}
+
+.landmark-node--rhombus .landmark-node__content span {
+  font-size: 14px;
+}
+
+.landmark-node--triangle .landmark-node__content {
+  inset: 37% 20% 8%;
+  align-items: end;
+}
+
+.landmark-node--triangle .landmark-node__content span {
+  font-size: 13px;
+}
+
+.landmark-node--parallelogram .landmark-node__content {
+  inset-inline: 27px;
+}
+
+.landmark-node--parallelogram .landmark-node__content span {
+  letter-spacing: .012em;
+}
+
+.landmark-node__document {
+  position: absolute;
+  inset: 13px 20px;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 7px;
+  overflow: hidden;
+  pointer-events: none;
+  /* Markdown and KaTeX remain mounted while zooming. Containment keeps their
+     layout and repaint work local to the landmark instead of the huge canvas. */
+  contain: layout paint style;
+}
+
+/* A paper Note has one body, not a miniature document title followed by text.
+   Give that body the full usable sheet so resizing feels natural. */
+.landmark-node--informal-note .landmark-node__document {
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  pointer-events: auto;
+}
+
+.landmark-node--oval .landmark-node__document { inset-inline: 12%; }
+.landmark-node--hexagon .landmark-node__document { inset-inline: 11%; }
+.landmark-node--octagon .landmark-node__document { inset: 17px 25px; }
+.landmark-node--rhombus .landmark-node__document { inset: 18% 24%; }
+.landmark-node--triangle .landmark-node__document { inset: 32% 18% 9%; }
+.landmark-node--parallelogram .landmark-node__document { inset-inline: 11%; }
+
+.landmark-node__document-title {
+  min-width: 0;
+  padding-bottom: 5px;
+  border-bottom: 1px solid color-mix(in srgb, var(--topic-color) 48%, transparent);
+  color: var(--ui-ink);
+  font: 650 var(--landmark-heading-size, 13px)/1.18 var(--font-math);
+  text-align: center;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
+
+.landmark-node--informal-note .landmark-node__preview .markdown-view {
+  font-family: var(--font-note);
+}
+
+.landmark-node__inline-note {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  outline: 0;
+  color: #24211e;
+  font-family: var(--font-note);
+  cursor: text;
+  pointer-events: auto;
+}
+
+.landmark-node__inline-note:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--topic-color, #343a40) 38%, transparent);
+  outline-offset: 2px;
+}
+
+.landmark-node__inline-note .landmark-node__preview {
+  width: 100%;
+  height: 100%;
+}
+
+.landmark-node__inline-note-editor {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 0 2px 2px;
+  overflow: auto;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: #24211e;
+  caret-color: var(--topic-color, #24211e);
+  font: 500 13px/1.46 var(--font-note);
+  letter-spacing: .002em;
+  white-space: pre-wrap;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--topic-color, #343a40) 30%, transparent) transparent;
+}
+
+.landmark-node__inline-note-error {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid #a12a2a;
+  background: #fff8f2;
+  color: #8d1e1e;
+  font: 700 10px/1 var(--font-ui);
+  pointer-events: none;
+}
+
+.landmark-node--oval .landmark-node__document-title {
+  font-variant-caps: small-caps;
+  letter-spacing: .045em;
+}
+
+.landmark-node--hexagon .landmark-node__document-title {
+  border-top: 1px solid color-mix(in srgb, var(--topic-color) 48%, transparent);
+  padding-top: 4px;
+}
+
+.landmark-node--triangle .landmark-node__document-title,
+.landmark-node--rhombus .landmark-node__document-title {
+  font-size: 12px;
+}
+
+.landmark-node__preview {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--ui-ink);
+  contain: layout paint style;
+}
+
+.landmark-node__preview .markdown-view {
+  font-size: 12.25px;
+  line-height: 1.43;
+}
+
+.landmark-node__preview .markdown-view :is(p, ul, ol, blockquote, pre) {
+  margin-block: .3em .62em;
+}
+
+.landmark-node__preview .markdown-view .katex-display {
+  margin: .55em 0 .72em;
+  overflow: hidden;
+}
+
+.landmark-node__preview--formula {
+  display: grid;
+  place-items: center;
+  mask-image: none;
+}
+
+.landmark-node__preview--formula .markdown-view {
+  max-width: 100%;
+  font-size: 14px;
+  text-align: center;
+}
+
+.landmark-node__preview-skeleton {
+  width: 76%;
+  height: 1px;
+  align-self: center;
+  justify-self: center;
+  background: color-mix(in srgb, var(--topic-color) 30%, transparent);
+}
+
+/* Keep React Flow's geometric handle tight to the frame so edge paths meet
+   the painted dot. Its transparent ::before disc supplies the much larger
+   acquisition area without pushing the calculated path endpoint outward. */
+.atlas-port.react-flow__handle {
+  width: 2px !important;
+  height: 2px !important;
+  min-width: 2px !important;
+  min-height: 2px !important;
+  border: 0 !important;
+  border-radius: 50% !important;
+  background: transparent !important;
+  overflow: visible !important;
+  pointer-events: all !important;
+  z-index: 25 !important;
+  cursor: url("/cursors/link.svg") 14 14, crosshair !important;
+}
+
+.atlas-port.react-flow__handle::before,
+.atlas-port.react-flow__handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: width 80ms ease, height 80ms ease, opacity 80ms ease;
+}
+
+.atlas-port.react-flow__handle::before {
+  width: 12px;
+  height: 12px;
+  background: color-mix(in srgb, var(--topic-color, var(--group-color, #111418)) 20%, transparent);
+  opacity: 0;
+}
+
+.atlas-port__hit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+
+.atlas-port.react-flow__handle::after {
+  width: 4px;
+  height: 4px;
+  border: 1px solid var(--ui-ink);
+  background: #ffffff;
+}
+
+.atlas-port.react-flow__handle:hover::before,
+.atlas-graph.is-connecting .atlas-port.react-flow__handle::before {
+  opacity: 1;
+}
+
+.atlas-port.react-flow__handle:hover::after,
+.atlas-graph.is-connecting .atlas-port.react-flow__handle::after {
+  width: 7px;
+  height: 7px;
+  background: var(--ui-ink);
+}
+
+/* Groups: substantial true-alpha colour fields; interaction still belongs to
+   the exact contour so overlapping territories never steal canvas gestures. */
+.region-frame {
+  --region-fill-opacity: .34;
+  --region-stroke-width: 1.35;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  color: var(--ui-ink);
+  font-family: var(--font-ui);
+  pointer-events: none;
+  isolation: isolate;
+}
+
+.region-frame__surface {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  shape-rendering: geometricPrecision;
+}
+
+.region-frame__shape {
+  fill: var(--group-color, #565e67);
+  fill-opacity: var(--region-fill-opacity);
+  stroke: var(--group-color, #565e67);
+  stroke-opacity: 1;
+  stroke-width: var(--region-stroke-width);
+  vector-effect: non-scaling-stroke;
+}
+
+.region-frame--level-subject {
+  --region-fill-opacity: 0;
+  --region-stroke-width: 2.1;
+}
+
+.region-frame--level-subgroup {
+  --region-fill-opacity: .44;
+  --region-stroke-width: .85;
+}
+
+.region-frame--weight-hairline {
+  --region-stroke-width: .85;
+}
+
+.region-frame--weight-regular {
+  --region-stroke-width: 1.35;
+}
+
+.region-frame--weight-strong {
+  --region-stroke-width: 2.1;
+}
+
+.region-frame__subject-field,
+.region-frame__subject-contour,
+.region-frame__subgroup-field {
+  fill: none;
+  stroke: var(--group-color, #565e67);
+  vector-effect: non-scaling-stroke;
+}
+
+.region-frame__subject-field {
+  stroke-width: calc(var(--region-stroke-width) * 4);
+  stroke: var(--ui-border-strong);
+  stroke-opacity: .22;
+}
+
+/* Subject identity is carried across the territory, not by a small badge.
+   The marks are neutral, widely spaced, and deliberately below ten-percent
+   ink so mathematical landmarks remain the visual foreground. */
+.region-frame__subject-texture {
+  stroke: none;
+  pointer-events: none;
+}
+
+.region-frame__subject-texture-mark {
+  fill: none;
+  stroke: var(--ui-ink-secondary);
+  stroke-opacity: .085;
+  stroke-width: .72;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.region-frame__subject-contour {
+  stroke-width: max(.7, calc(var(--region-stroke-width) * .55));
+  stroke: var(--ui-ink-muted);
+  stroke-dasharray: 1 8;
+  stroke-linecap: round;
+  opacity: .72;
+}
+
+.region-frame--level-subject .region-frame__shape {
+  fill: none;
+  fill-opacity: 0;
+  stroke: var(--ui-ink-secondary);
+  stroke-opacity: .92;
+}
+
+.region-frame__subgroup-field {
+  stroke-width: calc(var(--region-stroke-width) * 4);
+  stroke-opacity: .4;
+  stroke-dasharray: 1 7;
+  stroke-linecap: round;
+  opacity: 1;
+}
+
+.region-frame--dashed .region-frame__shape {
+  stroke-dasharray: 8 6;
+}
+
+.region-frame--double .region-frame__shape {
+  stroke-width: calc(var(--region-stroke-width) * 1.9);
+}
+
+.region-frame__hit-target {
+  pointer-events: stroke;
+}
+
+.region-title-toolbar {
+  /* Group descriptors are ordered broad-to-specific in the node array, so a
+     shared layer lets the smaller/later title win group overlaps while every
+     landmark (z=2) still wins over every title. */
+  z-index: 1 !important;
+  pointer-events: none !important;
+}
+
+.region-title-toolbar--subject {
+  z-index: 1 !important;
+}
+
+.region-title-toolbar--group {
+  z-index: 1 !important;
+}
+
+.region-title-toolbar--subgroup {
+  z-index: 1 !important;
+}
+
+.region-frame__titlebar {
+  --title-frame: color-mix(in srgb, var(--group-color) 62%, var(--ui-ink));
+  position: relative;
+  isolation: isolate;
+  width: max-content;
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 7px 13px 8px;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  color: var(--ui-ink);
+  box-shadow: none;
+  font-family: var(--font-ui);
+  pointer-events: auto;
+  cursor: url("/cursors/move.svg") 14 14, move;
+  touch-action: none;
+  user-select: none;
+}
+
+.region-frame__titlebar[data-title-shape="oval"] {
+  padding-inline: 17px;
+}
+
+.region-frame__titlebar[data-title-shape="rounded-rectangle"] {
+  padding-inline: 16px;
+}
+
+.region-frame__titlebar[data-title-shape="hexagon"],
+.region-frame__titlebar[data-title-shape="octagon"],
+.region-frame__titlebar[data-title-shape="rhombus"] {
+  padding-inline: 15px;
+}
+
+.region-frame__titlebar[data-title-shape="triangle"] {
+  padding-right: 21px;
+}
+
+.region-frame__titlebar[data-title-shape="parallelogram"] {
+  padding-inline: 17px;
+}
+
+.region-frame__titlebar[data-title-position="top-right"],
+.region-frame__titlebar[data-title-position="middle-right"],
+.region-frame__titlebar[data-title-position="bottom-right"] {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.region-frame__titlebar[data-title-position="top-right"] .region-frame__title-mark,
+.region-frame__titlebar[data-title-position="middle-right"] .region-frame__title-mark,
+.region-frame__titlebar[data-title-position="bottom-right"] .region-frame__title-mark {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.region-frame__titlebar[data-title-position="top-right"] .region-frame__title-text,
+.region-frame__titlebar[data-title-position="middle-right"] .region-frame__title-text,
+.region-frame__titlebar[data-title-position="bottom-right"] .region-frame__title-text {
+  grid-column: 1;
+  grid-row: 1;
+  text-align: right;
+}
+
+.region-frame__titlebar[data-title-position="top-center"] .region-frame__title-text,
+.region-frame__titlebar[data-title-position="bottom-center"] .region-frame__title-text {
+  text-align: center;
+}
+
+.region-frame__title-frame {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 2px rgba(20, 25, 31, .1));
+  transition: filter 80ms ease-out;
+}
+
+.region-frame__title-frame-field {
+  fill: rgba(255, 255, 255, .975);
+  stroke: none;
+}
+
+.region-frame__title-frame-outline,
+.region-frame__title-frame-inner,
+.region-frame__title-frame-detail {
+  fill: none;
+  stroke: var(--title-frame);
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.region-frame__title-frame-outline {
+  stroke-width: 1.25;
+  transition: stroke 80ms ease-out, stroke-width 80ms ease-out;
+}
+
+.region-frame__title-frame-inner {
+  display: none;
+}
+
+.region-frame__title-frame-detail {
+  stroke: var(--group-color);
+  stroke-width: 1.5;
+}
+
+.region-frame__titlebar[data-title-position^="top-"] {
+  align-content: start;
+}
+
+.region-frame__titlebar[data-title-position^="bottom-"] {
+  align-content: end;
+}
+
+.region-frame__titlebar:active {
+  cursor: url("/cursors/grabbing.svg") 10 10, grabbing;
+}
+
+.region-frame__title-mark {
+  position: relative;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--title-frame);
+  background: #ffffff;
+}
+
+.region-frame__title-mark-core {
+  width: 5px;
+  height: 5px;
+  display: block;
+  background: var(--group-color);
+}
+
+.region-frame__title-text {
+  position: relative;
+  z-index: 1;
+  display: block;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  color: var(--ui-ink);
+  box-shadow: none;
+  font: 680 28px/1.14 var(--font-ui);
+  font-kerning: normal;
+  font-synthesis: none;
+  letter-spacing: -.018em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  text-rendering: optimizeLegibility;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.region-frame__titlebar:hover {
+  box-shadow: none;
+}
+
+.region-frame__titlebar:hover .region-frame__title-frame {
+  filter: drop-shadow(0 3px 3px rgba(20, 25, 31, .16));
+}
+
+.region-frame__titlebar:hover .region-frame__title-frame-outline {
+  stroke: var(--ui-ink);
+  stroke-width: 1.7;
+}
+
+.region-frame.is-selected .region-frame__title-frame-outline {
+  stroke: var(--ui-ink);
+}
+
+.region-frame.is-selected .region-frame__title-frame {
+  filter:
+    drop-shadow(0 0 1px #ffffff)
+    drop-shadow(0 0 2px color-mix(in srgb, var(--group-color) 52%, transparent));
+}
+
+.region-title-toolbar--subject .region-frame__titlebar {
+  min-height: 48px;
+  gap: 0;
+  padding: 9px 17px 10px;
+  border-top: 1px solid var(--ui-ink-secondary);
+  border-bottom: 1px solid var(--ui-border-strong);
+  background: rgba(255, 255, 255, .94);
+}
+
+.region-title-toolbar--subject .region-frame__title-frame {
+  display: none;
+}
+
+.region-title-toolbar--subject .region-frame__title-text {
+  font-family: var(--font-ui);
+  font-weight: 610;
+  line-height: 1.12;
+  letter-spacing: .115em;
+  text-transform: uppercase;
+  color: var(--ui-ink-secondary);
+}
+
+.region-title-toolbar--group .region-frame__titlebar {
+  min-height: 38px;
+}
+
+.region-title-toolbar--group .region-frame__title-frame-outline {
+  stroke-width: 1.4;
+}
+
+.region-title-toolbar--group .region-frame__title-frame-detail {
+  stroke-width: 2.2;
+}
+
+.region-title-toolbar--group .region-frame__title-mark {
+  width: 12px;
+  height: 12px;
+  border: 1.25px solid var(--title-frame);
+  background: #ffffff;
+  transform: rotate(45deg);
+}
+
+.region-title-toolbar--group .region-frame__title-mark-core {
+  width: 4px;
+  height: 4px;
+  background: var(--ui-ink);
+  transform: rotate(-45deg);
+}
+
+.region-title-toolbar--group .region-frame__title-text {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  line-height: 1.12;
+}
+
+.region-title-toolbar--subgroup .region-frame__titlebar {
+  min-height: 32px;
+  gap: 7px;
+  padding-block: 6px 7px;
+}
+
+.region-title-toolbar--subgroup .region-frame__title-frame-field {
+  fill: rgba(255, 255, 255, .94);
+}
+
+.region-title-toolbar--subgroup .region-frame__title-frame-outline {
+  stroke-width: 1;
+  stroke-dasharray: 0;
+}
+
+.region-title-toolbar--subgroup .region-frame__title-frame-detail {
+  stroke-width: 1.25;
+  stroke-dasharray: 8 4;
+  opacity: .82;
+}
+
+.region-title-toolbar--subgroup .region-frame__title-mark {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(90deg, var(--title-frame) 0 2px, transparent 2px 8px, var(--title-frame) 8px 10px),
+    linear-gradient(var(--title-frame) 0 2px, transparent 2px 8px, var(--title-frame) 8px 10px);
+}
+
+.region-title-toolbar--subgroup .region-frame__title-mark-core {
+  width: 4px;
+  height: 4px;
+  background: var(--group-color);
+}
+
+.region-title-toolbar--subgroup .region-frame__title-text {
+  color: var(--ui-ink);
+  font-family: var(--font-ui);
+  font-weight: 650;
+  line-height: 1.12;
+  letter-spacing: -.01em;
+}
+
+.region-port {
+  pointer-events: all !important;
+}
+
+/* React Flow measures the in-node copy to terminate edges on the exact shape,
+   while the viewport copy owns pointer acquisition above the wide edge hit
+   corridor.  The layer itself remains transparent, so landmarks (z=2) and the
+   canvas still own every point outside the four compact port discs. */
+.atlas-graph .react-flow__viewport-portal {
+  pointer-events: none;
+}
+
+.region-port-layer {
+  z-index: 1.5;
+  pointer-events: none;
+}
+
+.atlas-port.react-flow__handle.region-port--geometry {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.atlas-port.react-flow__handle.region-port--proxy {
+  pointer-events: all !important;
+}
+
+/* Context palettes */
+.map-context-menu {
+  position: fixed;
+  z-index: 1000;
+  width: 296px;
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  border: 1px solid var(--ui-ink);
+  background: rgba(255, 255, 255, .985);
+  color: var(--ui-ink);
+  box-shadow: 0 12px 30px rgba(20, 25, 31, .16), 0 2px 5px rgba(20, 25, 31, .1);
+  font: 500 12px/1.35 var(--font-ui);
+  scrollbar-color: var(--ui-border-strong) transparent;
+  scrollbar-width: thin;
+  transform-origin: top left;
+  animation: palette-in 90ms ease-out;
+}
+
+.map-context-menu[data-horizontal="before"] {
+  transform-origin: top right;
+}
+
+.map-context-menu[data-vertical="before"] {
+  transform-origin: bottom left;
+}
+
+.map-context-menu[data-horizontal="before"][data-vertical="before"] {
+  transform-origin: bottom right;
+}
+
+@keyframes palette-in {
+  from { opacity: 0; transform: scale(.985); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.map-context-menu:focus {
+  outline: none;
+}
+
+.map-context-menu button {
+  color: inherit;
+}
+
+.map-menu-header,
+.map-context-menu__heading {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-chrome-raised);
+}
+
+.map-menu-title,
+.map-context-menu__heading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-ink);
+  font: 650 12.5px/1.2 var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-menu-header input,
+.map-context-menu > input[type="text"] {
+  width: 100%;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid var(--ui-border-strong);
+  outline: 0;
+  background: var(--ui-surface);
+  color: var(--ui-ink);
+  font: 600 12.5px/1 var(--font-ui);
+}
+
+.map-menu-header input:focus,
+.map-context-menu > input[type="text"]:focus {
+  border-color: var(--ui-accent);
+  box-shadow: inset 0 0 0 1px var(--ui-accent);
+}
+
+.map-menu-delete {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ui-danger) !important;
+}
+
+.map-menu-delete:hover {
+  border-color: var(--ui-danger);
+  background: #fff4f2;
+}
+
+/* Transitional legacy sections remain disciplined while every menu moves to tabs. */
+.map-context-menu__section {
+  margin: 0;
+  padding: 10px;
+  border-top: 1px solid var(--ui-border-soft);
+}
+
+.map-context-menu__section:first-child {
+  border-top: 0;
+}
+
+.map-context-menu__label {
+  display: block;
+  margin: 0 0 6px;
+  color: var(--ui-ink-secondary);
+  font: 600 11px/1.2 var(--font-ui);
+}
+
+.map-context-menu__grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.map-context-menu__grid--types {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.map-context-menu__grid--positions {
+  grid-template-columns: repeat(3, 32px);
+  width: max-content;
+}
+
+.map-context-menu__grid button,
+.map-context-menu__color-input {
+  min-width: 0;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
+}
+
+.map-context-menu__grid button:hover {
+  border-color: var(--ui-ink);
+  background: var(--ui-hover);
+}
+
+.map-context-menu button[aria-pressed="true"] {
+  border-color: var(--ui-accent);
+  box-shadow: inset 0 0 0 1px var(--ui-accent);
+}
+
+.map-context-menu__danger {
+  border-color: transparent !important;
+  color: var(--ui-danger) !important;
+}
+
+.map-context-menu__danger:hover {
+  border-color: var(--ui-danger) !important;
+  background: #fff4f2 !important;
+}
+
+/* Mathematical notes */
+.markdown-view {
+  color: var(--ui-ink);
+  font-family: var(--font-math);
+  font-size: 16.25px;
+  line-height: 1.66;
+  overflow-wrap: anywhere;
+}
+
+.markdown-view > :first-child {
+  margin-top: 0;
+}
+
+.markdown-view > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-view h1 {
+  margin: 1.55em 0 .62em;
+  font-size: 1.55em;
+  line-height: 1.16;
+}
+
+.markdown-view h2 {
+  margin: 1.45em 0 .58em;
+  font-size: 1.28em;
+  line-height: 1.2;
+}
+
+.markdown-view h3 {
+  margin: 1.3em 0 .5em;
+  font-size: 1.12em;
+}
+
+.markdown-view p,
+.markdown-view ul,
+.markdown-view ol,
+.markdown-view blockquote,
+.markdown-view pre {
+  margin: .86em 0;
+}
+
+.markdown-view ul,
+.markdown-view ol {
+  padding-left: 1.5em;
+}
+
+.markdown-view table {
+  width: 100%;
+  margin: 1.15em 0;
+  border-collapse: collapse;
+  font-size: .94em;
+}
+
+.markdown-view th,
+.markdown-view td {
+  padding: .42em .58em;
+  border: 1px solid var(--ui-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-view th {
+  background: #f5f6f7;
+  font-family: var(--font-ui);
+  font-size: .83em;
+  font-weight: 650;
+}
+
+.markdown-view .task-list-item {
+  list-style: none;
+}
+
+.markdown-view .task-list-item input {
+  margin: 0 .42em 0 -1.32em;
+  accent-color: #252a31;
+}
+
+.markdown-view .footnotes {
+  margin-top: 2.2em;
+  padding-top: .7em;
+  border-top: 1px solid var(--ui-border);
+  color: var(--ui-ink-secondary);
+  font-size: .88em;
+}
+
+.markdown-view [data-footnote-backref] {
+  font-family: var(--font-ui);
+  text-decoration: none;
+}
+
+.markdown-view .math-footnote-reference {
+  position: relative;
+  top: -.32em;
+  padding-inline: .08em;
+  font-family: var(--font-ui);
+  font-size: .7em;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.markdown-view .math-footnote-definition {
+  margin: .7em 0;
+  padding: .45em .62em;
+  border-color: var(--ui-border);
+  background: #fbfcfc;
+  color: var(--ui-ink-secondary);
+  font-size: .9em;
+}
+
+.markdown-view a {
+  color: #164f91;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.markdown-view .wiki-link {
+  border-radius: 1px;
+  text-decoration-color: color-mix(in srgb, currentColor 38%, transparent);
+  cursor: pointer;
+}
+
+.markdown-view .wiki-link:hover,
+.markdown-view .wiki-link:focus-visible {
+  color: #0b3d73;
+  text-decoration-color: currentColor;
+}
+
+.markdown-view .wiki-link:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
+.markdown-view .wiki-link--ambiguous,
+.markdown-view .wiki-link--missing {
+  color: #747b83;
+  text-decoration-style: dotted;
+  cursor: help;
+}
+
+/* Obsidian uses inline float-right spans for short axiom labels. Recreate only
+   that layout through a controlled class; imported attributes never reach the
+   DOM. Clearing the float prevents a long label overlapping the next line. */
+.markdown-view .math-property-label {
+  float: right;
+  clear: right;
+  margin-left: 1.25em;
+  color: var(--ui-ink-secondary);
+  font-size: .92em;
+  white-space: nowrap;
+}
+
+.markdown-view code {
+  padding: .08em .25em;
+  border: 1px solid var(--ui-border-soft);
+  background: #f7f8f9;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: .8em;
+}
+
+.markdown-view pre {
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--ui-border-strong);
+  background: #f8f9fa;
+}
+
+.markdown-view pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.markdown-view img[data-managed-asset] {
+  display: block;
+  max-width: min(100%, 920px);
+  height: auto;
+  margin: 1.1em auto;
+  border: 1px solid var(--ui-border-strong);
+  background: #fff;
+  object-fit: contain;
+}
+
+.managed-markdown-image__placeholder {
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 1.1em 0;
+  border: 1px solid var(--ui-border);
+  background: #fafafa;
+  color: var(--ui-ink-faint);
+  font: 550 12px/1.3 var(--font-ui);
+}
+
+.managed-markdown-image__placeholder.is-error {
+  border-style: dashed;
+  color: var(--ui-danger);
+}
+
+.markdown-view blockquote {
+  margin-inline: 0;
+  padding: .62em .82em;
+  border: 1px solid var(--ui-border-strong);
+  background: #fbfbfa;
+  color: #34393f;
+}
+
+.markdown-view .math-environment {
+  margin: 1.25em 0;
+  padding: .85em 1em;
+  border: 1px solid var(--ui-ink);
+  background: #ffffff;
+}
+
+.markdown-view .math-environment > :first-child {
+  margin-top: 0;
+}
+
+.markdown-view .math-environment > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-view .katex-display {
+  margin: 1.45em 0;
+  padding: .24em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.markdown-view--editable,
+.markdown-view--editable .editable-math {
+  cursor: url("/cursors/text.svg") 12 12, text;
+}
+
+.markdown-view--editable .editable-math.is-active-edit-target {
+  box-shadow: 0 1px 0 var(--ui-ink);
+}
+
+.markdown-skeleton {
+  display: grid;
+  gap: 11px;
+  padding-top: 12px;
+}
+
+.markdown-skeleton i {
+  width: 90%;
+  height: 9px;
+  background: var(--ui-hover);
+}
+
+.markdown-skeleton i:nth-child(2) { width: 72%; }
+.markdown-skeleton i:nth-child(3) { width: 84%; }
+
+.live-note-editor {
+  position: relative;
+}
+
+.live-note-editor__status {
+  position: sticky;
+  z-index: 8;
+  top: 54px;
+  float: right;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ui-border-strong);
+  background: #ffffff;
+  color: var(--ui-ink-muted);
+}
+
+.live-note-editor__status[data-status="error"] {
+  border-color: var(--ui-danger);
+  color: var(--ui-danger);
+}
+
+.live-empty-note {
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid var(--ui-border);
+  background: #ffffff;
+  color: var(--ui-ink-muted);
+}
+
+@media (max-width: 980px) {
+  body { min-width: 640px; }
+  .search-bar.is-expanded .atlas-search { width: min(230px, 31vw); }
+  .inspector-scroll { padding-inline: 19px; }
+  .inspector-header { margin-inline: -19px; padding-left: 19px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
