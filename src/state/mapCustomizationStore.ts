@@ -6,10 +6,15 @@ import {
   type LandmarkShape,
   type ObjectTitlePosition,
 } from "../domain/mapAppearance";
+import {
+  isSubjectFrameStyle,
+  type SubjectFrameStyle,
+} from "../domain/subjectFrameStyle";
 import { repositoryPath } from "../domain/contentPaths";
 import { type LandmarkKind, type SubjectId } from "../domain/types";
 
 export type { GroupShape, LandmarkShape } from "../domain/mapAppearance";
+export type { SubjectFrameStyle } from "../domain/subjectFrameStyle";
 
 export const MAP_CUSTOMIZATIONS_SCHEMA_VERSION = 1;
 export const MAX_CONNECTION_LABEL_LENGTH = 160;
@@ -81,6 +86,17 @@ export function defaultGroupBorderWeight(level: GroupLevel): GroupBorderWeight {
   return "regular";
 }
 
+export const SUBJECT_GROUP_SHAPE: GroupShape = "rounded-rectangle";
+
+/**
+ * Subjects have one deliberate silhouette. Resolve that invariant at runtime
+ * instead of normalizing saved metadata, so a legacy object's authored shape
+ * remains available if it is later changed back to a group or subgroup.
+ */
+export function resolveGroupShape(level: GroupLevel, authoredShape: GroupShape): GroupShape {
+  return level === "subject" ? SUBJECT_GROUP_SHAPE : authoredShape;
+}
+
 export interface GroupCustomization {
   level?: GroupLevel;
   title?: string;
@@ -148,6 +164,7 @@ export interface CustomGroup {
   fillOpacity?: number;
   titlePosition?: GroupTitlePosition;
   titleFontSize?: number;
+  subjectFrameStyle?: SubjectFrameStyle;
 }
 
 export interface ConnectionCustomization {
@@ -492,6 +509,9 @@ function normalizeCustomGroup(value: unknown): CustomGroup | undefined {
   }
   const titleFontSize = safeGroupTitleFontSize(value.titleFontSize);
   if (titleFontSize !== undefined) normalized.titleFontSize = titleFontSize;
+  if (isSubjectFrameStyle(value.subjectFrameStyle)) {
+    normalized.subjectFrameStyle = value.subjectFrameStyle;
+  }
   return normalized;
 }
 

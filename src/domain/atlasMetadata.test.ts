@@ -94,6 +94,45 @@ describe("atlas metadata schema", () => {
     });
   });
 
+  it("validates subject frame styles only on authored custom groups", () => {
+    const atlas = emptyAtlasMetadata("pilot");
+    atlas.customizations.customGroups.push({
+      id: "styled-subject",
+      title: "Styled subject",
+      subjectId: "synthetic-subject",
+      level: "subject",
+      x: 0,
+      y: 0,
+      width: 1120,
+      height: 700,
+      color: "#92989F",
+      shape: "rectangle",
+      subjectFrameStyle: "offset-rails",
+    });
+
+    const valid = validateAtlasMetadata(atlas);
+    expect(valid.valid).toBe(true);
+    expect(valid.value.customizations.customGroups[0].subjectFrameStyle).toBe("offset-rails");
+
+    const invalid = structuredClone(atlas) as unknown as {
+      customizations: { customGroups: Array<Record<string, unknown>> };
+    };
+    invalid.customizations.customGroups[0].subjectFrameStyle = "unknown-frame";
+    const invalidResult = validateAtlasMetadata(invalid);
+    expect(invalidResult.valid).toBe(false);
+    expect(invalidResult.issues.join(" ")).toMatch(/customGroups|group field/);
+
+    const misplaced = emptyAtlasMetadata("pilot") as unknown as {
+      customizations: { groups: Record<string, Record<string, unknown>> };
+    };
+    misplaced.customizations.groups.derived = { subjectFrameStyle: "double-rule" };
+    const misplacedResult = validateAtlasMetadata(misplaced);
+    expect(misplacedResult.valid).toBe(false);
+    expect(misplacedResult.issues).toContain(
+      "atlas.customizations.groups.derived: expected a group style object",
+    );
+  });
+
   it("keeps the cloud rectangle territory-only in portable metadata", () => {
     const atlas = emptyAtlasMetadata("pilot") as unknown as {
       customizations: {

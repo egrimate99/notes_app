@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FILE_EXPLORER_DRAG_MIME,
@@ -80,6 +81,37 @@ const nodes: ContentTreeNode[] = [
   { name: "Archive Shelf", path: "Archive Shelf", type: "directory", children: [] },
   { name: "Reading Queue.MD", path: "Reading Queue.MD", type: "file" },
 ];
+
+function SelectionDrivenExplorer({
+  initialPath,
+  onClear,
+  withActions = false,
+}: {
+  initialPath: string;
+  onClear: () => void;
+  withActions?: boolean;
+}) {
+  const [selectedPath, setSelectedPath] = useState<string | undefined>(initialPath);
+  const [actions] = useState(() => withActions ? fileActions() : undefined);
+  return (
+    <>
+      <output data-testid="active-file">{selectedPath ?? "none"}</output>
+      <button type="button" data-testid="external-file-clear" onClick={() => setSelectedPath(undefined)}>
+        Clear active file externally
+      </button>
+      <FileExplorer
+        nodes={nodes}
+        selectedContentPath={selectedPath}
+        onSelectFile={setSelectedPath}
+        onClearActiveSelection={() => {
+          onClear();
+          setSelectedPath(undefined);
+        }}
+        actions={actions}
+      />
+    </>
+  );
+}
 
 afterEach(cleanup);
 
@@ -345,6 +377,109 @@ describe("FileExplorer", () => {
     expect(demoSubject).toHaveAttribute("aria-selected", "false");
     fireEvent.keyDown(demoSubject, { key: "Escape" });
     expect(screen.getAllByRole("treeitem").every((row) => row.getAttribute("aria-selected") === "false")).toBe(true);
+  });
+
+  it("clears the active note when blank explorer space or Escape removes its selection", () => {
+    const onClear = vi.fn();
+    const { unmount } = render(
+      <SelectionDrivenExplorer initialPath="Reading Queue.MD" onClear={onClear} />,
+    );
+    const readingQueue = screen.getByRole("treeitem", { name: "Reading Queue" });
+    expect(readingQueue).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(screen.getByRole("tree", { name: "Files" }));
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("active-file")).toHaveTextContent("none");
+    expect(readingQueue).toHaveAttribute("aria-selected", "false");
+
+    unmount();
+    onClear.mockClear();
+    render(<SelectionDrivenExplorer initialPath="Reading Queue.MD" onClear={onClear} />);
+    const reopenedQueue = screen.getByRole("treeitem", { name: "Reading Queue" });
+    fireEvent.keyDown(reopenedQueue, { key: "Escape" });
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("active-file")).toHaveTextContent("none");
+    expect(reopenedQueue).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("clears an active note even while its path is absent from the current tree", () => {
+    const onClear = vi.fn();
+    render(<SelectionDrivenExplorer initialPath="Pending Shelf/Not Loaded Yet.md" onClear={onClear} />);
+
+    fireEvent.click(screen.getByRole("tree", { name: "Files" }));
+
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("active-file")).toHaveTextContent("none");
+  });
+
+  it("clears the active note while preserving a replacement directory selection", () => {
+    const onClear = vi.fn();
+    render(<SelectionDrivenExplorer initialPath="Reading Queue.MD" onClear={onClear} />);
+
+    const directory = screen.getByRole("treeitem", { name: "Archive Shelf" });
+    fireEvent.click(directory);
+
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("active-file")).toHaveTextContent("none");
+    expect(directory).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("treeitem", { name: "Reading Queue" }))
+      .toHaveAttribute("aria-selected", "false");
+  });
+
+  it("clears the active note when its row is additively toggled off", () => {
+    const onClear = vi.fn();
+    render(<SelectionDrivenExplorer initialPath="Reading Queue.MD" onClear={onClear} />);
+    const readingQueue = screen.getByRole("treeitem", { name: "Reading Queue" });
+
+    fireEvent.click(readingQueue, { ctrlKey: true });
+
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("active-file")).toHaveTextContent("none");
+    expect(readingQueue).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("clears the old note when a context click selects a different directory", () => {
+    const onClear = vi.fn();
+    render(
+      <SelectionDrivenExplorer
+        initialPath="Reading Queue.MD"
+        onClear={onClear}
+        withActions
+      />,
+    );
+
+    const directory = screen.getByRole("treeitem", { name: "Archive Shelf" });
+    fireEvent.contextMenu(directory, { clientX: 120, clientY: 90 });
+
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("active-file")).toHaveTextContent("none");
+    expect(directory).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("does not leak a local clear across a batched direct note switch", () => {
+    const onClear = vi.fn();
+    render(
+      <SelectionDrivenExplorer
+        initialPath="Demo Subject/Sample Topic/Example Note.md"
+        onClear={onClear}
+      />,
+    );
+    const readingQueue = screen.getByRole("treeitem", { name: "Reading Queue" });
+    const emptyShelf = screen.getByRole("treeitem", { name: "Empty Shelf" });
+    const exampleNote = screen.getByRole("treeitem", { name: "Example Note" });
+    fireEvent.click(readingQueue);
+    fireEvent.click(emptyShelf, { ctrlKey: true });
+
+    fireEvent.click(exampleNote, { shiftKey: true });
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("active-file")).toHaveTextContent(
+      "Demo Subject/Sample Topic/Example Note.md",
+    );
+
+    fireEvent.click(screen.getByTestId("external-file-clear"));
+    expect(screen.getAllByRole("treeitem").every(
+      (row) => row.getAttribute("aria-selected") === "false",
+    )).toBe(true);
   });
 
   it("moves a compacted file and folder selection onto folders", async () => {

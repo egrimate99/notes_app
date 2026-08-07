@@ -83,7 +83,7 @@ describe("InspectorPanel", () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it("offers the panel collapse action without adding note metadata controls", () => {
+  it("offers a clear close action without adding note metadata controls", () => {
     const onCollapse = vi.fn();
     render(
       <InspectorPanel
@@ -94,7 +94,7 @@ describe("InspectorPanel", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide note sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close note sidebar" }));
     expect(onCollapse).toHaveBeenCalledOnce();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
@@ -107,7 +107,7 @@ describe("InspectorPanel", () => {
 
     expect(screen.getByText("Select a note on the map or in the file tree.")).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Hide note sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close note sidebar" }));
     expect(onCollapse).toHaveBeenCalledOnce();
   });
 });

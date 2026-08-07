@@ -14,7 +14,6 @@ import {
   FolderTree,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightOpen,
   RefreshCw,
 } from "lucide-react";
 import "@xyflow/react/dist/style.css";
@@ -337,18 +336,14 @@ function App() {
     maxSize: inspectorSize.max,
   });
   const fileVisibility = usePersistentPanelVisibility("math-atlas:panel-visible:file-sidebar");
-  const inspectorVisibility = usePersistentPanelVisibility("math-atlas:panel-visible:inspector");
-
-  const initialLandmarkId = snapshot.trails[0]?.steps[0]?.landmarkId ?? snapshot.landmarks[0]?.id;
-  const initialLandmark = snapshot.landmarks.find(({ id }) => id === initialLandmarkId);
-  const [selectedLandmarkId, setSelectedLandmarkId] = useState<string | undefined>(initialLandmarkId);
-  const [selectedFilePath, setSelectedFilePath] = useState<string | undefined>(repositoryPath(initialLandmark?.contentPath));
+  const [selectedLandmarkId, setSelectedLandmarkId] = useState<string>();
+  const [selectedFilePath, setSelectedFilePath] = useState<string>();
   const [contentTree, setContentTree] = useState<NoteTreeEntry[]>([]);
   const [treeLoading, setTreeLoading] = useState(true);
   const [treeError, setTreeError] = useState<string>();
   const [contentRefresh, setContentRefresh] = useState(0);
   const [openDocument, setOpenDocument] = useState<NoteDocument>();
-  const [documentLoading, setDocumentLoading] = useState(true);
+  const [documentLoading, setDocumentLoading] = useState(false);
   const [documentError, setDocumentError] = useState<string>();
   const [autoEditNoteId, setAutoEditNoteId] = useState<string>();
   const [atlasSyncError, setAtlasSyncError] = useState<string>();
@@ -402,6 +397,7 @@ function App() {
   const scheduleAtlasFlushRef = useRef<((delay?: number) => void) | undefined>(undefined);
   const desktopBridgeRef = useRef<DesktopWorkspaceBridge | undefined>(undefined);
   const desktopStatusRef = useRef<DesktopSurfaceStatus | undefined>(undefined);
+  const workspaceRef = useRef<HTMLElement>(null);
   const deferredDesktopAtlasRef = useRef<{
     placements: Placement[];
     customizations: MapCustomizations;
@@ -431,6 +427,17 @@ function App() {
     // the inspector. Suppress only the right panel so deleting a note does not
     // unexpectedly collapse the rest of the workspace controls.
     setDesktopInspectorDismissed(true);
+  }, []);
+
+  const handleClearActiveSelection = useCallback(() => {
+    if (!selectedLandmarkIdRef.current && !selectedFilePathRef.current) return;
+    clearActiveCanvasDocumentSelection();
+    desktopBridgeRef.current?.publishSelection({});
+  }, [clearActiveCanvasDocumentSelection]);
+
+  const handleDismissInspector = useCallback(() => {
+    setDesktopInspectorDismissed(true);
+    requestAnimationFrame(() => workspaceRef.current?.focus({ preventScroll: true }));
   }, []);
 
   const handleEditorSafetyChange = useCallback((safety: LiveNoteEditorSafety) => {
@@ -1001,9 +1008,21 @@ function App() {
     return new Set(filteredLandmarks.map(({ id }) => id));
   }, [deferredSearchQuery, filteredLandmarks]);
 
+  const prepareSelectedDocument = useCallback((path?: string) => {
+    readRequest.current += 1;
+    const cached = path ? documentCache.current.get(path) : undefined;
+    setOpenDocument(cached);
+    setDocumentLoading(Boolean(path && !cached));
+    setDocumentError(undefined);
+  }, []);
+
   const handleSelectLandmark = useCallback((landmark: Landmark) => {
     const filePath = treeIndex.pathByLandmarkId.get(landmark.id) || repositoryPath(landmark.contentPath);
     const sameFile = Boolean(filePath && selectedFilePathRef.current === filePath);
+    // Keep an in-flight read alive when a dismissed inspector is reopened for
+    // the same note. Changing paths still primes the loading state before the
+    // selection render so stale content never flashes in the panel.
+    if (!sameFile) prepareSelectedDocument(filePath);
     selectedLandmarkIdRef.current = landmark.id;
     selectedFilePathRef.current = filePath;
     setSelectedLandmarkId(landmark.id);
@@ -1011,10 +1030,11 @@ function App() {
     setDesktopInspectorDismissed(false);
     desktopBridgeRef.current?.publishSelection({ landmarkId: landmark.id, filePath });
     if (sameFile) void selectedNoteRevalidationRef.current();
-  }, [treeIndex]);
+  }, [prepareSelectedDocument, treeIndex]);
 
   const handleSelectFile = useCallback((path: string) => {
     const sameFile = selectedFilePathRef.current === path;
+    if (!sameFile) prepareSelectedDocument(path);
     selectedFilePathRef.current = path;
     setSelectedFilePath(path);
     // A file can have zero, one, or many canvas instances. Selecting it opens
@@ -1025,7 +1045,7 @@ function App() {
     setDesktopInspectorDismissed(false);
     desktopBridgeRef.current?.publishSelection({ filePath: path });
     if (sameFile) void selectedNoteRevalidationRef.current();
-  }, []);
+  }, [prepareSelectedDocument]);
 
   const handleNavigateWikiLink = useCallback((path: string) => {
     // Wikilinks always open the canonical file. Canvas instances remain
@@ -1839,9 +1859,9 @@ function App() {
   const hasValidInspectorSelection = selectedLandmarkId
     ? Boolean(selectedLandmark)
     : Boolean(selectedFilePath);
-  const showInspector = desktopMonitorMode
-    ? showDesktopChrome && !desktopInspectorDismissed && hasValidInspectorSelection
-    : inspectorVisibility.visible && !desktopInspectorDismissed && hasValidInspectorSelection;
+  const showInspector = !desktopInspectorDismissed && hasValidInspectorSelection && (
+    !desktopMonitorMode || showDesktopChrome
+  );
   const showSearch = !desktopMonitorMode || showDesktopChrome;
   const collapseDesktopChrome = () => {
     setDesktopChromeVisible(false);
@@ -1873,6 +1893,7 @@ function App() {
               nodes={navigationTree}
               selectedContentPath={selectedFilePath}
               onSelectFile={handleSelectFile}
+              onClearActiveSelection={handleClearActiveSelection}
               actions={fileExplorerActions}
               headerActions={(
                 <>
@@ -1909,9 +1930,6 @@ function App() {
         )}
         {!desktopMonitorMode && !showFileSidebar && (
           <button type="button" className="sidebar-restore sidebar-restore--left" aria-label="Show file sidebar" title="Show file sidebar" aria-controls="file-sidebar" aria-expanded="false" onClick={fileVisibility.show}><PanelLeftOpen size={13} aria-hidden="true" /></button>
-        )}
-        {!desktopMonitorMode && !showInspector && (
-          <button type="button" className="sidebar-restore sidebar-restore--right" aria-label="Show note sidebar" title="Show note sidebar" aria-controls="note-sidebar" aria-expanded="false" onClick={() => { setDesktopInspectorDismissed(false); inspectorVisibility.show(); }}><PanelRightOpen size={13} aria-hidden="true" /></button>
         )}
         {desktopHostAvailable && (
           <Suspense fallback={null}>
@@ -1950,7 +1968,7 @@ function App() {
         )}
 
         <div className="workspace-content" style={workspaceContentStyle}>
-          <main className="atlas-workspace">
+          <main ref={workspaceRef} className="atlas-workspace" tabIndex={-1}>
             <Suspense fallback={<div className="atlas-graph-loading" aria-label="Loading map" />}>
               <AtlasGraph
                 key={desktopMonitorMode
@@ -1983,6 +2001,7 @@ function App() {
                 placementOverrides={placementOverrides}
                 customizations={mapCustomizations}
                 onSelectLandmark={handleSelectLandmark}
+                onClearActiveSelection={handleClearActiveSelection}
                 onPlacementChange={handlePlacementChange}
                 onPlacementChanges={handlePlacementChanges}
                 onLandmarkResize={handleLandmarkResize}
@@ -2026,7 +2045,7 @@ function App() {
               wikiLinkIndex={wikiLinkIndex}
               onNavigateWikiLink={handleNavigateWikiLink}
               onEditorSafetyChange={handleEditorSafetyChange}
-              onCollapse={desktopMonitorMode ? collapseDesktopChrome : inspectorVisibility.hide}
+              onCollapse={handleDismissInspector}
             />
           </div>
         </div>

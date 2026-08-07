@@ -136,15 +136,21 @@ vi.mock("@xyflow/react", async () => {
         id: string;
         type: string;
         selected?: boolean;
+        position?: { x: number; y: number };
       }>) => {
-        setNodes((current: CapturedNode[]) => current.map((node) => {
-          const selection = changes.find((change) => (
-            change.type === "select" && change.id === node.id
-          ));
-          return selection
-            ? { ...node, selected: Boolean(selection.selected) }
-            : node;
-        }));
+        setNodes((current: CapturedNode[]) => changes.reduce(
+          (nextNodes: CapturedNode[], change) => nextNodes.map((node) => {
+            if (change.id !== node.id) return node;
+            if (change.type === "select") {
+              return { ...node, selected: Boolean(change.selected) };
+            }
+            if (change.type === "position" && change.position) {
+              return { ...node, position: { ...change.position } };
+            }
+            return node;
+          }),
+          current,
+        ));
       }, []);
       return [nodes, setNodes, onNodesChange] as const;
     },
@@ -156,7 +162,7 @@ vi.mock("@xyflow/react", async () => {
   };
 });
 
-import { AtlasGraph } from "./AtlasGraph";
+import { AtlasGraph, prepareCanvasMovementAssist } from "./AtlasGraph";
 
 interface CapturedNode {
   id: string;
@@ -308,9 +314,43 @@ const emptyPublicSnapshot: AtlasSnapshot = {
 };
 
 const customizations = emptyMapCustomizations("test-snapshot");
+const mixedDragCustomizations: MapCustomizations = {
+  ...customizations,
+  customGroups: [
+    {
+      id: "drag-group-alpha",
+      title: "Drag group alpha",
+      subjectId: "synthetic-field-05",
+      level: "group",
+      x: 4200,
+      y: 2800,
+      width: 420,
+      height: 252,
+      color: "#238636",
+      shape: "rectangle",
+      borderStyle: "solid",
+      titlePosition: "top-left",
+    },
+    {
+      id: "drag-group-beta",
+      title: "Drag group beta",
+      subjectId: "synthetic-field-05",
+      level: "subgroup",
+      x: 4900,
+      y: 3220,
+      width: 336,
+      height: 196,
+      color: "#1976D2",
+      shape: "oval",
+      borderStyle: "solid",
+      titlePosition: "top-left",
+    },
+  ],
+};
 const placementOverrides: [] = [];
 const callbacks = {
   onSelectLandmark: vi.fn(),
+  onClearActiveSelection: vi.fn(),
   onPlacementChange: vi.fn(),
   onPlacementChanges: vi.fn(),
   onKindChange: vi.fn(),
@@ -601,10 +641,10 @@ describe("AtlasGraph interaction state", () => {
     expect(flowCapture.setViewport).toHaveBeenCalledWith(remoteViewport, { duration: 0 });
   });
 
-  it("uses a snapped 28-unit black-dot canvas and generous connection targets", () => {
+  it("uses one 28-unit movement resolver and generous connection targets", () => {
     render(graph());
 
-    expect(flowCapture.props?.snapToGrid).toBe(true);
+    expect(flowCapture.props?.snapToGrid).toBe(false);
     expect(flowCapture.props?.onlyRenderVisibleElements).toBe(true);
     expect(flowCapture.props?.snapGrid).toEqual([28, 28]);
     expect(flowCapture.backgroundProps).toMatchObject({
@@ -613,7 +653,9 @@ describe("AtlasGraph interaction state", () => {
       size: 1.45,
       variant: "dots",
     });
-    expect(nodes().every(({ position }) => position.x % 28 === 0 && position.y % 28 === 0)).toBe(true);
+    // Authored half-grid alignments survive reload; the shared resolver owns
+    // grid settling during a gesture instead of rounding geometry on read.
+    expect(node("a").position).toEqual({ x: 4928, y: 300 });
 
     expect(flowCapture.props?.connectionRadius).toBe(16);
     expect(flowCapture.props?.reconnectRadius).toBe(12);
@@ -1149,6 +1191,28 @@ describe("AtlasGraph interaction state", () => {
     }));
   });
 
+  it("keeps the creation menu open while a blank right-click clears the active note", async () => {
+    const view = render(graph({ selectedLandmarkId: "a" }));
+
+    openCanvasMenu();
+    expect(callbacks.onClearActiveSelection).toHaveBeenCalledOnce();
+    view.rerender(graph({ selectedLandmarkId: undefined }));
+
+    expect(await screen.findByRole("dialog", { name: "Create map object" })).toBeVisible();
+  });
+
+  it("keeps a group menu open while its boundary right-click replaces the active note", async () => {
+    const view = render(graph({ selectedLandmarkId: "a" }));
+    const groupNode = nodes().find((candidate) => candidate.type === "region");
+    if (!groupNode) throw new Error("Expected a group node fixture");
+
+    openNodeMenu(groupNode.id);
+    expect(callbacks.onClearActiveSelection).toHaveBeenCalledOnce();
+    view.rerender(graph({ selectedLandmarkId: undefined }));
+
+    expect(await screen.findByRole("dialog")).toBeVisible();
+  });
+
   it("assigns distinct safe subject identities to the first two empty-canvas subjects", async () => {
     render(graph({
       snapshot: emptyPublicSnapshot,
@@ -1221,7 +1285,7 @@ describe("AtlasGraph interaction state", () => {
       customizations: noteCustomizations,
     }));
 
-    expect(node("scratch-note").position).toEqual({ x: -1456, y: 420 });
+    expect(node("scratch-note").position).toEqual({ x: -1450, y: 420 });
     expect(nodes().filter(({ type }) => type === "region")).toEqual([]);
     expect(nodes().some(({ id }) => id === "subject-zone:synthetic-field-04")).toBe(false);
 
@@ -1333,6 +1397,7 @@ describe("AtlasGraph interaction state", () => {
       shape: "rectangle" as const,
       borderStyle: "double" as const,
       titlePosition: "top-left" as const,
+      subjectFrameStyle: "beaded" as const,
     };
     const withLegacySubjectStyles: MapCustomizations = {
       ...customizations,
@@ -1356,14 +1421,43 @@ describe("AtlasGraph interaction state", () => {
     expect(node("custom-group:authored-subject").data).toMatchObject({
       variant: "custom",
       level: "subject",
+      shape: "rounded-rectangle",
+      subjectFrameStyle: "beaded",
     });
+    expect(withLegacySubjectStyles.customGroups[0].shape).toBe("rectangle");
+    expect(screen.getByTestId("group-authored-subject")).toHaveAttribute(
+      "data-subject-frame-style",
+      "beaded",
+    );
+    expect(screen.getByTestId("group-authored-subject")).toHaveAttribute(
+      "data-group-shape",
+      "rounded-rectangle",
+    );
 
     openNodeMenu("custom-group:authored-subject");
-    await screen.findByRole("dialog", { name: "Edit Synthetic Field 05" });
+    const subjectDialog = await screen.findByRole("dialog", { name: "Edit Synthetic Field 05" });
+    expect(within(subjectDialog).queryByRole("tab", { name: "Shape" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Delete group" }));
 
     const next = latestCustomizations(withLegacySubjectStyles);
     expect(next.customGroups).toEqual([]);
+  });
+
+  it("resolves a legacy generated subject to the cloud without rewriting its saved shape", () => {
+    const legacyCustomizations: MapCustomizations = {
+      ...customizations,
+      groups: {
+        ...customizations.groups,
+        "subject-zone:synthetic-field-05": { shape: "triangle" },
+        "linear-models": { shape: "hexagon" },
+      },
+    };
+
+    render(graph({ customizations: legacyCustomizations }));
+
+    expect(node("subject-zone:synthetic-field-05").data.shape).toBe("rounded-rectangle");
+    expect(node("region-frame:linear-models").data.shape).toBe("hexagon");
+    expect(legacyCustomizations.groups["subject-zone:synthetic-field-05"].shape).toBe("triangle");
   });
 
   it("reconciles a live frame when its hierarchy level changes", () => {
@@ -1571,8 +1665,9 @@ describe("AtlasGraph interaction state", () => {
       level: "subject",
       width: 1120,
       height: 700,
-      shape: "rectangle",
-      borderStyle: "double",
+      shape: "rounded-rectangle",
+      borderStyle: "solid",
+      subjectFrameStyle: "double-rule",
     });
     expect(subject.parentId).toBeUndefined();
     first.unmount();
@@ -1854,6 +1949,7 @@ describe("AtlasGraph interaction state", () => {
     openNodeMenu("subject-zone:synthetic-field-05");
     const dialog = await screen.findByRole("dialog", { name: "Edit Synthetic Field 05" });
     expect(within(dialog).queryByRole("tab", { name: "Colour" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("tab", { name: "Shape" })).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("tab", { name: "Frame" }));
     await within(dialog).findByRole("button", { name: "Solid frame" });
     expect(within(dialog).queryByRole("slider", { name: "Fine tune group fill opacity" }))
@@ -2111,8 +2207,524 @@ describe("AtlasGraph interaction state", () => {
     expect(node("b").selected).toBe(true);
   });
 
-  it("clears node and connection selections when left-clicking blank canvas", () => {
+  it("moves every selected landmark and custom group when a selected group is dragged", () => {
+    const queuedFrames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
+      queuedFrames.push(callback);
+      return queuedFrames.length;
+    }));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    render(graph({ customizations: mixedDragCustomizations }));
+    queuedFrames.length = 0;
+
+    const selectedIds = [
+      "a",
+      "b",
+      "custom-group:drag-group-alpha",
+      "custom-group:drag-group-beta",
+    ];
+    act(() => {
+      const onNodesChange = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+      onNodesChange(selectedIds.map((id) => ({ id, type: "select", selected: true })));
+    });
+    expect(selectedIds.every((id) => node(id).selected)).toBe(true);
+
+    const before = new Map(
+      [...selectedIds, "c"].map((id) => [id, { ...node(id).position }]),
+    );
+    const primary = node("custom-group:drag-group-alpha");
+    const start = primary.data.onTitleDragStart as (
+      ...args: [string, number, number, number, number, boolean?, boolean?]
+    ) => void;
+    const move = primary.data.onTitleDrag as (
+      ...args: [string, number, number, number, number, boolean?, boolean?]
+    ) => void;
+    const end = primary.data.onTitleDragEnd as (
+      ...args: [string, number, number, number, number, boolean?, boolean?]
+    ) => void;
+
+    act(() => {
+      start("drag-group-alpha", 100, 100, 100, 100, false, true);
+      move("drag-group-alpha", 56, -28, 156, 72, false, true);
+    });
+    expect(queuedFrames).toHaveLength(1);
+    act(() => queuedFrames[0](16));
+
+    const resolvedDelta = {
+      x: node("custom-group:drag-group-alpha").position.x - before.get("custom-group:drag-group-alpha")!.x,
+      y: node("custom-group:drag-group-alpha").position.y - before.get("custom-group:drag-group-alpha")!.y,
+    };
+    selectedIds.forEach((id) => {
+      const origin = before.get(id)!;
+      expect(node(id).position, `${id} should share the group drag delta`).toEqual({
+        x: origin.x + resolvedDelta.x,
+        y: origin.y + resolvedDelta.y,
+      });
+      expect(node(id).selected, `${id} should remain selected while moving`).toBe(true);
+    });
+    expect(node("c").position).toEqual(before.get("c"));
+
+    act(() => end("drag-group-alpha", 56, -28, 156, 72, false, true));
+
+    expect(callbacks.onPlacementChanges).toHaveBeenCalledOnce();
+    const persistedLandmarks = callbacks.onPlacementChanges.mock.calls[0][0];
+    expect(persistedLandmarks).toHaveLength(2);
+    expect(persistedLandmarks).toEqual(expect.arrayContaining([
+      {
+        landmarkId: "a",
+        x: before.get("a")!.x + resolvedDelta.x,
+        y: before.get("a")!.y + resolvedDelta.y,
+      },
+      {
+        landmarkId: "b",
+        x: before.get("b")!.x + resolvedDelta.x,
+        y: before.get("b")!.y + resolvedDelta.y,
+      },
+    ]));
+    expect(callbacks.onCustomizationsChange).toHaveBeenCalledOnce();
+    const persisted = applyCustomizationUpdates(mixedDragCustomizations);
+    ["drag-group-alpha", "drag-group-beta"].forEach((regionId) => {
+      const group = persisted.customGroups.find(({ id }) => id === regionId);
+      const origin = before.get(`custom-group:${regionId}`)!;
+      expect(group, `${regionId} should be persisted in the group batch`).toMatchObject({
+        x: origin.x + resolvedDelta.x,
+        y: origin.y + resolvedDelta.y,
+      });
+    });
+    expect(selectedIds.every((id) => node(id).selected)).toBe(true);
+  });
+
+  it("moves selected custom groups with a native multi-landmark drag", () => {
+    render(graph({ customizations: mixedDragCustomizations }));
+    const selectedIds = [
+      "a",
+      "b",
+      "custom-group:drag-group-alpha",
+      "custom-group:drag-group-beta",
+    ];
+    act(() => {
+      const onNodesChange = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+      onNodesChange(selectedIds.map((id) => ({ id, type: "select", selected: true })));
+    });
+
+    const before = new Map(selectedIds.map((id) => [id, { ...node(id).position }]));
+    const primary = node("a");
+    const peer = node("b");
+    const movedPrimary = {
+      ...primary,
+      position: { x: primary.position.x + 84, y: primary.position.y + 56 },
+    };
+    const movedPeer = {
+      ...peer,
+      position: { x: peer.position.x + 84, y: peer.position.y + 56 },
+    };
+    const precisionDrag = { altKey: true };
+    const start = flowCapture.props?.onNodeDragStart as (
+      event: { altKey?: boolean },
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const drag = flowCapture.props?.onNodeDrag as (
+      event: { altKey?: boolean },
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const stop = flowCapture.props?.onNodeDragStop as (
+      event: { altKey?: boolean },
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const handleChanges = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+
+    act(() => start(precisionDrag, primary, [primary, peer]));
+    act(() => {
+      handleChanges([
+        { id: "a", type: "position", position: movedPrimary.position, dragging: true },
+        { id: "b", type: "position", position: movedPeer.position, dragging: true },
+      ]);
+      drag(precisionDrag, movedPrimary, [movedPrimary, movedPeer]);
+    });
+
+    const resolvedDelta = {
+      x: node("a").position.x - before.get("a")!.x,
+      y: node("a").position.y - before.get("a")!.y,
+    };
+    selectedIds.forEach((id) => {
+      const origin = before.get(id)!;
+      expect(node(id).position, `${id} should share the landmark drag delta`).toEqual({
+        x: origin.x + resolvedDelta.x,
+        y: origin.y + resolvedDelta.y,
+      });
+      expect(node(id).selected).toBe(true);
+    });
+
+    act(() => stop(precisionDrag, movedPrimary, [movedPrimary, movedPeer]));
+
+    expect(callbacks.onPlacementChanges).toHaveBeenCalledOnce();
+    expect(callbacks.onPlacementChanges.mock.calls[0][0]).toHaveLength(2);
+    expect(callbacks.onPlacementChanges.mock.calls[0][0]).toEqual(expect.arrayContaining([
+      { landmarkId: "a", x: before.get("a")!.x + resolvedDelta.x, y: before.get("a")!.y + resolvedDelta.y },
+      { landmarkId: "b", x: before.get("b")!.x + resolvedDelta.x, y: before.get("b")!.y + resolvedDelta.y },
+    ]));
+    expect(callbacks.onCustomizationsChange).toHaveBeenCalledOnce();
+    const persisted = applyCustomizationUpdates(mixedDragCustomizations);
+    ["drag-group-alpha", "drag-group-beta"].forEach((regionId) => {
+      const group = persisted.customGroups.find(({ id }) => id === regionId);
+      const origin = before.get(`custom-group:${regionId}`)!;
+      expect(group).toMatchObject({ x: origin.x + resolvedDelta.x, y: origin.y + resolvedDelta.y });
+    });
+    expect(selectedIds.every((id) => node(id).selected)).toBe(true);
+  });
+
+  it("replaces a prior multi-selection when dragging an unselected landmark", () => {
+    render(graph({ customizations: mixedDragCustomizations }));
+    const previouslySelected = [
+      "a",
+      "b",
+      "custom-group:drag-group-alpha",
+      "custom-group:drag-group-beta",
+    ];
+    act(() => {
+      const onNodesChange = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+      onNodesChange(previouslySelected.map((id) => ({ id, type: "select", selected: true })));
+    });
+    const before = new Map(nodes().map(({ id, position }) => [id, { ...position }]));
+    const primary = node("c");
+    const moved = {
+      ...primary,
+      position: { x: primary.position.x - 56, y: primary.position.y + 28 },
+    };
+    const precisionDrag = { altKey: true };
+    const start = flowCapture.props?.onNodeDragStart as (
+      event: { altKey?: boolean },
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const drag = flowCapture.props?.onNodeDrag as (
+      event: { altKey?: boolean },
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const stop = flowCapture.props?.onNodeDragStop as (
+      event: { altKey?: boolean },
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const handleChanges = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+
+    act(() => start(precisionDrag, primary, [primary]));
+    expect(nodes().filter(({ selected }) => selected).map(({ id }) => id)).toEqual(["c"]);
+    act(() => {
+      handleChanges([{
+        id: "c",
+        type: "position",
+        position: moved.position,
+        dragging: true,
+      }]);
+      drag(precisionDrag, moved, [moved]);
+    });
+    const resolvedPosition = { ...node("c").position };
+    act(() => stop(precisionDrag, moved, [moved]));
+
+    expect(node("c").position).toEqual(resolvedPosition);
+    previouslySelected.forEach((id) => {
+      expect(node(id).position, `${id} should not follow an unselected object`).toEqual(before.get(id));
+      expect(node(id).selected).toBe(false);
+    });
+    expect(node("c").selected).toBe(true);
+    const persisted = [
+      ...callbacks.onPlacementChange.mock.calls.map(([placement]) => placement),
+      ...callbacks.onPlacementChanges.mock.calls.flatMap(([placements]) => placements),
+    ];
+    expect(persisted).toEqual([{
+      landmarkId: "c",
+      x: resolvedPosition.x,
+      y: resolvedPosition.y,
+    }]);
+    expect(callbacks.onCustomizationsChange).not.toHaveBeenCalled();
+  });
+
+  it("magnetically aligns a landmark to a peer and shows a live drafting guide", async () => {
+    await prepareCanvasMovementAssist();
     render(graph());
+    const primary = node("a");
+    const target = node("b");
+    const moved = {
+      ...primary,
+      position: { x: target.position.x + 6, y: primary.position.y },
+    };
+    const start = flowCapture.props?.onNodeDragStart as (
+      event: Record<string, never>,
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const drag = flowCapture.props?.onNodeDrag as typeof start;
+    const stop = flowCapture.props?.onNodeDragStop as typeof start;
+    const handleChanges = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+
+    act(() => start({}, primary, [primary]));
+    act(() => {
+      handleChanges([{
+        id: primary.id,
+        type: "position",
+        position: moved.position,
+        dragging: true,
+      }]);
+      drag({}, moved, [moved]);
+    });
+
+    expect(node("a").position.x).toBe(target.position.x);
+    expect(await screen.findByTestId("alignment-guide-x")).toHaveAttribute(
+      "data-guide-targets",
+      "b",
+    );
+
+    act(() => stop({}, moved, [moved]));
+    expect(screen.queryByTestId("canvas-alignment-guides")).not.toBeInTheDocument();
+    expect(callbacks.onPlacementChange).toHaveBeenCalledWith(expect.objectContaining({
+      landmarkId: "a",
+      x: target.position.x,
+    }));
+  });
+
+  it("aligns the actual side ports of connected landmarks so their arrow is straight", async () => {
+    await prepareCanvasMovementAssist();
+    render(graph({
+      customizations: {
+        ...customizations,
+        landmarks: {
+          a: { height: 112 },
+          b: { height: 196 },
+        },
+      },
+    }));
+    const primary = node("a");
+    const target = node("b");
+    const straightY = target.position.y + target.height! / 2 - primary.height! / 2;
+    const moved = {
+      ...primary,
+      position: { x: primary.position.x, y: straightY + 5 },
+    };
+    const start = flowCapture.props?.onNodeDragStart as (
+      event: Record<string, never>,
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const drag = flowCapture.props?.onNodeDrag as typeof start;
+    const stop = flowCapture.props?.onNodeDragStop as typeof start;
+    const handleChanges = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+
+    act(() => start({}, primary, [primary]));
+    act(() => {
+      handleChanges([{
+        id: primary.id,
+        type: "position",
+        position: moved.position,
+        dragging: true,
+      }]);
+      drag({}, moved, [moved]);
+    });
+
+    const resolved = node("a");
+    expect(resolved.position.y + resolved.height! / 2).toBe(
+      target.position.y + target.height! / 2,
+    );
+    expect(await screen.findByTestId("alignment-guide-y")).toHaveAttribute(
+      "data-guide-kind",
+      "connection",
+    );
+    expect(screen.getByTestId("alignment-guide-y")).toHaveAttribute(
+      "data-moving-anchor",
+      "connection-port",
+    );
+    expect(screen.queryByTestId("alignment-guide-x")).not.toBeInTheDocument();
+
+    act(() => stop({}, moved, [moved]));
+    expect(callbacks.onPlacementChange).toHaveBeenCalledWith(expect.objectContaining({
+      landmarkId: "a",
+      y: straightY,
+    }));
+  });
+
+  it("centres a landmark exactly inside its visible destination group, including a half-grid axis", async () => {
+    await prepareCanvasMovementAssist();
+    const centeringTarget: MapCustomizations = {
+      ...customizations,
+      customGroups: [{
+        id: "centering-target",
+        title: "Centering target",
+        subjectId: "synthetic-field-05",
+        level: "subgroup",
+        x: 8008,
+        y: 8008,
+        width: 420,
+        height: 280,
+        color: "#238636",
+        shape: "rectangle",
+        borderStyle: "solid",
+        titlePosition: "top-left",
+      }],
+    };
+    render(graph({ customizations: centeringTarget }));
+    const primary = node("c");
+    const subject = node("custom-group:centering-target");
+    const centred = {
+      x: subject.position.x + (subject.width! - primary.width!) / 2,
+      y: subject.position.y + (subject.height! - primary.height!) / 2,
+    };
+    expect(centred.y % 28).toBe(14);
+    const moved = {
+      ...primary,
+      position: { x: centred.x + 5, y: centred.y - 6 },
+    };
+    const start = flowCapture.props?.onNodeDragStart as (
+      event: Record<string, never>,
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const drag = flowCapture.props?.onNodeDrag as typeof start;
+    const stop = flowCapture.props?.onNodeDragStop as typeof start;
+    const handleChanges = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+
+    act(() => start({}, primary, [primary]));
+    act(() => {
+      handleChanges([{
+        id: primary.id,
+        type: "position",
+        position: moved.position,
+        dragging: true,
+      }]);
+      drag({}, moved, [moved]);
+    });
+
+    expect(node("c").position).toEqual(centred);
+    expect(await screen.findByTestId("alignment-guide-x")).toHaveAttribute("data-guide-kind", "containment");
+    expect(await screen.findByTestId("alignment-guide-x")).toHaveAttribute("data-guide-targets", "custom-group:centering-target");
+    expect(await screen.findByTestId("alignment-guide-y")).toHaveAttribute("data-guide-kind", "containment");
+    act(() => stop({}, moved, [moved]));
+    expect(callbacks.onPlacementChange).toHaveBeenCalledWith({ landmarkId: "c", ...centred });
+  });
+
+  it("locks a drag to its dominant axis while Shift is held", async () => {
+    await prepareCanvasMovementAssist();
+    render(graph());
+    const primary = node("c");
+    const moved = {
+      ...primary,
+      position: {
+        x: primary.position.x + 84,
+        y: primary.position.y + 56,
+      },
+    };
+    const constrainedEvent = { shiftKey: true };
+    const start = flowCapture.props?.onNodeDragStart as (
+      event: { shiftKey?: boolean },
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const drag = flowCapture.props?.onNodeDrag as typeof start;
+    const stop = flowCapture.props?.onNodeDragStop as typeof start;
+    const handleChanges = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+
+    act(() => start(constrainedEvent, primary, [primary]));
+    act(() => {
+      handleChanges([{
+        id: primary.id,
+        type: "position",
+        position: moved.position,
+        dragging: true,
+      }]);
+      drag(constrainedEvent, moved, [moved]);
+    });
+
+    expect(node("c").position.y).toBe(primary.position.y);
+    expect(await screen.findByTestId("alignment-guide-y")).toHaveAttribute(
+      "data-guide-targets",
+      "axis-lock",
+    );
+    act(() => stop(constrainedEvent, moved, [moved]));
+    expect(callbacks.onPlacementChange).toHaveBeenCalledWith(expect.objectContaining({
+      landmarkId: "c",
+      y: primary.position.y,
+    }));
+  });
+
+  it("uses Alt as a clean smart-guide bypass while retaining grid settling", () => {
+    render(graph());
+    const primary = node("c");
+    const target = node("b");
+    const moved = {
+      ...primary,
+      position: { x: target.position.x + 6, y: primary.position.y },
+    };
+    const precisionEvent = { altKey: true };
+    const start = flowCapture.props?.onNodeDragStart as (
+      event: { altKey?: boolean },
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const drag = flowCapture.props?.onNodeDrag as typeof start;
+    const stop = flowCapture.props?.onNodeDragStop as typeof start;
+    const handleChanges = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+
+    act(() => start(precisionEvent, primary, [primary]));
+    act(() => {
+      handleChanges([{
+        id: primary.id,
+        type: "position",
+        position: moved.position,
+        dragging: true,
+      }]);
+      drag(precisionEvent, moved, [moved]);
+    });
+
+    expect(node("c").position.x).toBe(Math.round(moved.position.x / 28) * 28);
+    expect(node("c").position.x).not.toBe(target.position.x);
+    expect(screen.queryByTestId("canvas-alignment-guides")).not.toBeInTheDocument();
+    act(() => stop(precisionEvent, moved, [moved]));
+  });
+
+  it("clears a captured guide and restores geometry when a drag is cancelled", async () => {
+    await prepareCanvasMovementAssist();
+    render(graph());
+    const primary = node("a");
+    const origin = { ...primary.position };
+    const target = node("b");
+    const moved = {
+      ...primary,
+      position: { x: target.position.x + 5, y: primary.position.y },
+    };
+    const start = flowCapture.props?.onNodeDragStart as (
+      event: Record<string, never>,
+      node: CapturedNode,
+      draggedNodes: CapturedNode[],
+    ) => void;
+    const drag = flowCapture.props?.onNodeDrag as typeof start;
+    const stop = flowCapture.props?.onNodeDragStop as typeof start;
+    const handleChanges = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+
+    act(() => start({}, primary, [primary]));
+    act(() => {
+      handleChanges([{
+        id: primary.id,
+        type: "position",
+        position: moved.position,
+        dragging: true,
+      }]);
+      drag({}, moved, [moved]);
+    });
+    expect(await screen.findByTestId("alignment-guide-x")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(node("a").position).toEqual(origin);
+    expect(screen.queryByTestId("canvas-alignment-guides")).not.toBeInTheDocument();
+    act(() => stop({}, moved, [moved]));
+    expect(callbacks.onPlacementChange).not.toHaveBeenCalled();
+    expect(callbacks.onPlacementChanges).not.toHaveBeenCalled();
+  });
+
+  it("clears node, connection, and shell note selections when left-clicking blank canvas", () => {
+    render(graph({ selectedLandmarkId: "a" }));
     act(() => {
       const onNodesChange = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
       onNodesChange([
@@ -2134,6 +2746,53 @@ describe("AtlasGraph interaction state", () => {
     expect(node("a").selected).toBe(false);
     expect(node("b").selected).toBe(false);
     expect(edges()[0].selected).toBe(false);
+    expect(callbacks.onClearActiveSelection).toHaveBeenCalledOnce();
+  });
+
+  it("clears the active shell note when a group replaces it or it is toggled off", () => {
+    render(graph({ selectedLandmarkId: "a" }));
+    const onNodeClick = flowCapture.props?.onNodeClick as (
+      event: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean },
+      node: CapturedNode,
+    ) => void;
+
+    act(() => onNodeClick({}, node("a")));
+    callbacks.onClearActiveSelection.mockClear();
+    const groupNode = nodes().find((candidate) => candidate.type === "region");
+    if (!groupNode) throw new Error("Expected a group node fixture");
+    act(() => onNodeClick({}, groupNode));
+    expect(callbacks.onClearActiveSelection).toHaveBeenCalledOnce();
+
+    callbacks.onClearActiveSelection.mockClear();
+    act(() => {
+      const onNodesChange = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+      onNodesChange([{ id: "a", type: "select", selected: true }]);
+    });
+    const latestNodeClick = flowCapture.props?.onNodeClick as typeof onNodeClick;
+    act(() => latestNodeClick({ ctrlKey: true }, node("a")));
+    expect(callbacks.onClearActiveSelection).toHaveBeenCalledOnce();
+  });
+
+  it("clears a Files-owned note when a selection rectangle replaces its canvas emphasis", async () => {
+    const sharedPath = "content/Synthetic Field/Shared.md";
+    const fileLandmarks = landmarks.map((item) => item.id === "a"
+      ? { ...item, contentPath: sharedPath }
+      : item);
+    render(graph({
+      landmarks: fileLandmarks,
+      groupLandmarks: fileLandmarks,
+      selectedContentPath: "Synthetic Field/Shared.md",
+    }));
+    const groupNode = nodes().find((candidate) => candidate.type === "region");
+    if (!groupNode) throw new Error("Expected a group node fixture");
+
+    act(() => {
+      const onNodesChange = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+      onNodesChange([{ id: groupNode.id, type: "select", selected: true }]);
+    });
+
+    await waitFor(() => expect(callbacks.onClearActiveSelection).toHaveBeenCalledOnce());
+    expect(nodes().find(({ id }) => id === groupNode.id)?.selected).toBe(true);
   });
 
   it("keeps Delete and Backspace out of every text-editing surface", () => {
@@ -2616,6 +3275,74 @@ describe("AtlasGraph interaction state", () => {
     expect(callbacks.onPlacementChanges).not.toHaveBeenCalled();
   });
 
+  it("rebuilds and commits a mixed selection on the monitor that receives pointer-up", () => {
+    const start: DesktopCanvasDragEvent = {
+      gestureId: "monitor-left:mixed-selection",
+      ownerSurfaceId: "monitor-left",
+      nodeId: "a",
+      nodeKind: "landmark",
+      smartSnapDisabled: true,
+      selectionNodeIds: [
+        "a",
+        "b",
+        "custom-group:drag-group-alpha",
+      ],
+      phase: "start",
+      startPointer: { x: -140, y: 84 },
+      pointer: { x: -140, y: 84 },
+    };
+    const rendered = render(graph({
+      customizations: mixedDragCustomizations,
+      desktopSurfaceId: "monitor-right",
+      desktopCanvasDrag: start,
+      onDesktopCanvasDrag: vi.fn(),
+    }));
+    const before = new Map(start.selectionNodeIds?.map((id) => [
+      id,
+      { ...node(id).position },
+    ]));
+    const move: DesktopCanvasDragEvent = {
+      ...start,
+      smartSnapDisabled: true,
+      phase: "move",
+      pointer: { x: -56, y: 28 },
+    };
+
+    rendered.rerender(graph({
+      customizations: mixedDragCustomizations,
+      desktopSurfaceId: "monitor-right",
+      desktopCanvasDrag: move,
+      onDesktopCanvasDrag: vi.fn(),
+    }));
+    const resolvedDelta = {
+      x: node("a").position.x - before.get("a")!.x,
+      y: node("a").position.y - before.get("a")!.y,
+    };
+    start.selectionNodeIds?.forEach((id) => {
+      expect(node(id).position).toEqual({
+        x: before.get(id)!.x + resolvedDelta.x,
+        y: before.get(id)!.y + resolvedDelta.y,
+      });
+    });
+
+    rendered.rerender(graph({
+      customizations: mixedDragCustomizations,
+      desktopSurfaceId: "monitor-right",
+      desktopCanvasDrag: {
+        ...move,
+        phase: "end",
+        finalizerSurfaceId: "monitor-right",
+      },
+      onDesktopCanvasDrag: vi.fn(),
+    }));
+    expect(callbacks.onPlacementChanges).toHaveBeenCalledOnce();
+    expect(callbacks.onPlacementChanges).toHaveBeenCalledWith(expect.arrayContaining([
+      { landmarkId: "a", x: before.get("a")!.x + resolvedDelta.x, y: before.get("a")!.y + resolvedDelta.y },
+      { landmarkId: "b", x: before.get("b")!.x + resolvedDelta.x, y: before.get("b")!.y + resolvedDelta.y },
+    ]));
+    expect(callbacks.onCustomizationsChange).toHaveBeenCalledOnce();
+  });
+
   it("hands a landmark drag to another monitor and lets only its finalizer persist", () => {
     const publishFromLeft = vi.fn<(event: DesktopCanvasDragEvent) => void>();
     const left = render(graph({
@@ -2659,32 +3386,41 @@ describe("AtlasGraph interaction state", () => {
       onDesktopCanvasDrag: publishFromRight,
     }));
 
-    expect(node("a").position).toEqual({
-      x: original.position.x + 280,
-      y: original.position.y - 112,
-    });
+    const settledMovePosition = {
+      x: Math.round((original.position.x + 280) / 28) * 28,
+      y: Math.round((original.position.y - 112) / 28) * 28,
+    };
+    expect(node("a").position).toEqual(settledMovePosition);
     act(() => {
       fireEvent.pointerUp(window, {
         button: 0,
         buttons: 0,
+        altKey: true,
         clientX: 328,
         clientY: -44,
       });
     });
     const end = publishFromRight.mock.calls[publishFromRight.mock.calls.length - 1]?.[0];
     if (!end) throw new Error("The receiving surface did not publish a drag end.");
+    const settledEndPosition = {
+      x: Math.round((originalPosition.x + 328 - 20) / 28) * 28,
+      y: Math.round((originalPosition.y - 44 - 40) / 28) * 28,
+    };
     expect(end).toMatchObject({
       gestureId: start.gestureId,
       ownerSurfaceId: "monitor-left",
       finalizerSurfaceId: "monitor-right",
       phase: "end",
-      pointer: { x: 328, y: -44 },
+      pointer: {
+        x: start.startPointer.x + settledEndPosition.x - originalPosition.x,
+        y: start.startPointer.y + settledEndPosition.y - originalPosition.y,
+      },
     });
     expect(callbacks.onPlacementChange).toHaveBeenCalledOnce();
     expect(callbacks.onPlacementChange).toHaveBeenCalledWith({
       landmarkId: "a",
-      x: Math.round((originalPosition.x + 328 - 20) / 28) * 28,
-      y: Math.round((originalPosition.y - 44 - 40) / 28) * 28,
+      x: settledEndPosition.x,
+      y: settledEndPosition.y,
     });
     right.unmount();
 
@@ -2931,6 +3667,27 @@ describe("AtlasGraph interaction state", () => {
 
     expect(callbacks.onPlacementChanges).not.toHaveBeenCalled();
     expect(callbacks.onPlacementChange).not.toHaveBeenCalled();
+  });
+
+  it("nudges the current mixed canvas selection by one dot with arrow keys", () => {
+    render(graph({ customizations: mixedDragCustomizations }));
+    const selectedIds = ["a", "custom-group:drag-group-beta"];
+    act(() => {
+      const onNodesChange = flowCapture.props?.onNodesChange as (changes: unknown[]) => void;
+      onNodesChange(selectedIds.map((id) => ({ id, type: "select", selected: true })));
+    });
+    const before = new Map(selectedIds.map((id) => [id, { ...node(id).position }]));
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    selectedIds.forEach((id) => {
+      expect(node(id).position).toEqual({
+        x: before.get(id)!.x + 28,
+        y: before.get(id)!.y,
+      });
+    });
+    expect(callbacks.onPlacementChanges).toHaveBeenCalledOnce();
+    expect(callbacks.onCustomizationsChange).toHaveBeenCalledOnce();
   });
 
   it("assigns an overlapping landmark to one deterministic direct group owner", () => {

@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run --environment jsdom --maxWorkers=4",
     "test:watch": "vitest --environment jsdom",
+    "sync:subject-frames": "node scripts/sync-subject-frames.mjs",
     "verify:ui": "node scripts/verify-ui.mjs",
     "verify:editor": "node scripts/verify-formula-editor.mjs",
     "verify:file-workflow": "node scripts/verify-file-workflow.mjs",

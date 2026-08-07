@@ -71,6 +71,66 @@
   cursor: url("/cursors/grabbing.svg") 14 14, grabbing !important;
 }
 
+/* Drafting guides are deliberately crisper than selection outlines. They sit
+   in the transformed viewport but never participate in hit testing, so a line
+   crossing a note cannot steal the next pointer sample. */
+.canvas-alignment-guides,
+.canvas-alignment-guide {
+  overflow: visible;
+  pointer-events: none;
+}
+
+.canvas-alignment-guide line {
+  fill: none;
+  stroke: #245cba;
+  stroke-width: 1;
+  stroke-linecap: square;
+  opacity: .9;
+}
+
+.canvas-alignment-guide--connection line {
+  stroke: #0f60ca;
+  stroke-width: 1.4;
+  opacity: 1;
+}
+
+.canvas-alignment-guide__port {
+  fill: #fff;
+  stroke: #0f60ca;
+  stroke-width: 1.35;
+}
+
+.canvas-alignment-guide--containment line {
+  stroke: #66549a;
+  stroke-dasharray: 4 4;
+  opacity: .78;
+}
+
+.canvas-alignment-guide--distribution line {
+  stroke: #16745a;
+  stroke-width: 1.15;
+}
+
+.canvas-alignment-guide[data-guide-targets="axis-lock"] line {
+  stroke: #4e5968;
+  stroke-dasharray: 3 4;
+  opacity: .82;
+}
+
+.canvas-alignment-guide__label rect {
+  fill: rgba(255, 255, 255, .96);
+  stroke: #16745a;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.canvas-alignment-guide__label text {
+  fill: #0d5742;
+  font: 650 10px/1 var(--font-ui);
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .atlas-graph *,
   .atlas-graph *::before,

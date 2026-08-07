@@ -94,7 +94,7 @@ describe("RegionFrameNode", () => {
     expect(hitTarget).toHaveAttribute("pointer-events", "stroke");
     expect(hitTarget).toHaveAttribute("stroke-width", "28");
     expect(hitTarget).toHaveAttribute("vector-effect", "non-scaling-stroke");
-    expect(rendered.container.querySelector(".region-frame__subject-texture")).not.toBeInTheDocument();
+    expect(rendered.container.querySelector(".region-frame__subject-frame")).not.toBeInTheDocument();
     expect(screen.queryByTestId("node-resizer")).not.toBeInTheDocument();
     expect(rendered.container.querySelectorAll(".region-port--geometry")).toHaveLength(4);
     expect(rendered.container.querySelectorAll(".region-port--proxy")).toHaveLength(4);
@@ -106,6 +106,88 @@ describe("RegionFrameNode", () => {
       transform: "translate(0px, 0px)",
     });
   });
+
+  it("defensively renders a legacy subject with the shared cloud silhouette", () => {
+    const rendered = render(
+      <RegionFrameNode
+        {...nodeProps}
+        data={{ ...data, level: "subject", variant: "custom", shape: "triangle" }}
+      />,
+    );
+
+    const group = screen.getByTestId("group-linear-models");
+    const visible = rendered.container.querySelector<SVGPathElement>(".region-frame__shape");
+    const hitTarget = rendered.container.querySelector<SVGPathElement>(".region-frame__hit-target");
+    expect(group).toHaveAttribute("data-group-shape", "rounded-rectangle");
+    expect(group).toHaveClass("region-frame--rounded-rectangle");
+    expect(group).not.toHaveClass("region-frame--triangle");
+    expect(visible?.getAttribute("d")).toContain("A28 28");
+    expect(hitTarget).toHaveAttribute("d", visible?.getAttribute("d"));
+    expect(screen.getByLabelText("Move Linear models subject")).toHaveAttribute(
+      "data-title-shape",
+      "rounded-rectangle",
+    );
+  });
+
+  it.each([
+    { zoom: .08, level: "subject", variant: "subject", shape: "oval" },
+    { zoom: .2, level: "group", variant: "region", shape: "hexagon" },
+    { zoom: .32, level: "subgroup", variant: "custom", shape: "rhombus" },
+  ] as const)(
+    "keeps the $level $shape boundary selectable at $zoom overview zoom",
+    ({ zoom, level, variant, shape }) => {
+      flow.zoom = zoom;
+      const onRequestSelection = vi.fn();
+      const regionId = `overview-${level}`;
+      const rendered = render(
+        <div className="atlas-graph is-zoom-far is-overview">
+          <RegionFrameNode
+            {...nodeProps}
+            id={`region-frame:${regionId}`}
+            selected={false}
+            data={{
+              ...data,
+              regionId,
+              title: `Overview ${level}`,
+              level,
+              variant,
+              shape,
+              onRequestSelection,
+            }}
+          />
+        </div>,
+      );
+
+      const visible = rendered.container.querySelector<SVGPathElement>(".region-frame__shape");
+      const hitTarget = rendered.container.querySelector<SVGPathElement>(".region-frame__hit-target");
+      if (!visible || !hitTarget) throw new Error("Missing group perimeter fixture");
+
+      // React Flow applies zoom above the SVG, so even a non-scaling SVG stroke
+      // is scaled by that ancestor. The authored corridor compensates in world
+      // units to retain a precise 24px overview target on screen.
+      expect(hitTarget).toHaveAttribute("d", visible.getAttribute("d"));
+      expect(hitTarget).toHaveAttribute("pointer-events", "stroke");
+      const authoredHitWidth = Number(hitTarget.getAttribute("stroke-width"));
+      expect(authoredHitWidth * zoom).toBeGreaterThanOrEqual(24);
+      expect(authoredHitWidth * zoom).toBeLessThanOrEqual(28);
+
+      fireEvent.pointerDown(hitTarget, {
+        button: 0,
+        pointerId: 80,
+        clientX: 20,
+        clientY: 20,
+      });
+      fireEvent.pointerUp(hitTarget, {
+        pointerId: 80,
+        clientX: 20,
+        clientY: 20,
+      });
+      expect(onRequestSelection).toHaveBeenCalledWith(
+        `region-frame:${regionId}`,
+        "replace",
+      );
+    },
+  );
 
   it("uses one cloudlike rounded contour for display, selection, and interaction", () => {
     const rendered = render(
@@ -310,54 +392,68 @@ describe("RegionFrameNode", () => {
     );
   });
 
-  it("gives subject territories their own contour layers and title treatment", () => {
+  it("gives subject territories a neutral cloud perimeter and icon title card", () => {
     const rendered = render(
-      <RegionFrameNode {...nodeProps} data={{ ...data, title: "Synthetic Field 02", variant: "subject" }} />,
+      <RegionFrameNode {...nodeProps} data={{ ...data, shape: "rounded-rectangle", title: "Synthetic Field 02", variant: "subject", borderWeight: "regular" }} />,
     );
 
     expect(screen.getByTestId("group-linear-models")).toHaveAttribute("data-region-variant", "subject");
     expect(screen.getByTestId("group-linear-models")).toHaveAttribute("data-fill-opacity", "0");
+    expect(screen.getByTestId("group-linear-models")).toHaveAttribute("data-subject-frame-style", "double-rule");
+    expect(screen.getByTestId("group-linear-models")).toHaveAttribute("data-border-weight", "regular");
+    expect(screen.getByTestId("group-linear-models")).toHaveClass("region-frame--weight-regular");
     expect(rendered.container.querySelector(".region-frame__subject-field")).toBeInTheDocument();
-    expect(rendered.container.querySelector(".region-frame__subject-contour")).toBeInTheDocument();
-    const visible = rendered.container.querySelector(".region-frame__shape");
-    const texture = rendered.container.querySelector<SVGPathElement>(".region-frame__subject-texture");
-    const pattern = rendered.container.querySelector<SVGPatternElement>("pattern");
-    const textureMark = rendered.container.querySelector(".region-frame__subject-texture-mark");
-    expect(texture).toHaveAttribute("d", visible?.getAttribute("d"));
-    expect(texture).toHaveAttribute("fill", `url(#${pattern?.id})`);
-    expect(texture).toHaveClass("region-frame__subject-texture");
-    expect(pattern).toHaveAttribute("patternUnits", "userSpaceOnUse");
-    expect(pattern).toHaveAttribute("viewBox", "0 0 44 44");
-    expect(Number(pattern?.getAttribute("width"))).toBeCloseTo(44 * 100 / 420, 8);
-    expect(Number(pattern?.getAttribute("height"))).toBeCloseTo(44 * 100 / 252, 8);
-    expect(textureMark).toHaveClass("region-frame__subject-texture-mark");
-    expect(textureMark).not.toHaveAttribute("vector-effect");
-    expect(screen.getByLabelText("Move Synthetic Field 02 subject").parentElement).toHaveClass("region-title-toolbar--subject");
-    expect(screen.getByLabelText("Move Synthetic Field 02 subject")).toHaveAttribute("data-title-level", "subject");
+    expect(rendered.container.querySelector(".region-frame__subject-frame")).not.toBeInTheDocument();
+    expect(rendered.container.querySelector(".region-frame__subject-texture")).not.toBeInTheDocument();
+    expect(rendered.container.querySelector("linearGradient, pattern")).not.toBeInTheDocument();
+    const title = screen.getByLabelText("Move Synthetic Field 02 subject");
+    const icon = rendered.container.querySelector(".region-frame__subject-icon");
+    expect(title.parentElement).toHaveClass("region-title-toolbar--subject");
+    expect(title).toHaveAttribute("data-title-level", "subject");
+    expect(title).toHaveAttribute("data-title-treatment", "subject");
+    expect(screen.getByText("Synthetic Field 02")).toHaveStyle({ fontSize: "42px" });
+    expect(icon).toHaveAttribute("data-subject-icon", "double-rule");
+    expect(icon?.querySelector("svg")).toBeInTheDocument();
     expect(rendered.container.querySelector(".region-frame__title-mark")).not.toBeInTheDocument();
   });
 
-  it("uses collision-free texture references for distinct subjects", () => {
+  it("maps the seven stable subject styles to seven unique Lucide title icons", () => {
+    const styles = [
+      "double-rule",
+      "triple-rule",
+      "corner-brackets",
+      "dashed-inset",
+      "cardinal-ticks",
+      "beaded",
+      "offset-rails",
+    ] as const;
     const rendered = render(
       <>
-        <RegionFrameNode
-          {...nodeProps}
-          id="region-frame:synthetic-field-02"
-          data={{ ...data, regionId: "subject-zone:synthetic-field-02", title: "Synthetic Field 02", variant: "subject" }}
-        />
-        <RegionFrameNode
-          {...nodeProps}
-          id="region-frame:synthetic-field-07"
-          data={{ ...data, regionId: "subject-zone:synthetic-field-07", title: "Synthetic Field 07", variant: "subject" }}
-        />
+        {styles.map((subjectFrameStyle, index) => (
+          <RegionFrameNode
+            {...nodeProps}
+            key={subjectFrameStyle}
+            id={`region-frame:synthetic-field-${index + 1}`}
+            data={{
+              ...data,
+              regionId: `subject-zone:synthetic-field-${index + 1}`,
+              title: `Synthetic Field ${index + 1}`,
+              variant: "subject",
+              subjectFrameStyle,
+            }}
+          />
+        ))}
       </>,
     );
-    const patterns = [...rendered.container.querySelectorAll<SVGPatternElement>("pattern")];
+    const icons = [...rendered.container.querySelectorAll<HTMLElement>(".region-frame__subject-icon")];
 
-    expect(patterns).toHaveLength(2);
-    expect(patterns[0].id).not.toBe(patterns[1].id);
-    expect(patterns.every((pattern) => pattern.querySelector(".region-frame__subject-texture-mark")))
-      .toBe(true);
+    expect(icons).toHaveLength(7);
+    expect(icons.map((icon) => icon.getAttribute("data-subject-icon"))).toEqual(styles);
+    expect(new Set(icons.map((icon) => icon.querySelector("svg")?.innerHTML)).size).toBe(7);
+    icons.forEach((icon) => {
+      expect(icon.querySelector("svg")).toBeInTheDocument();
+    });
+    expect(rendered.container.querySelector(".region-frame__subject-frame, .region-frame__subject-texture, linearGradient, pattern")).not.toBeInTheDocument();
   });
 
   it("renders subgroups as a third, explicitly subordinate canvas level", () => {
@@ -369,7 +465,7 @@ describe("RegionFrameNode", () => {
     expect(subgroup).toHaveAttribute("data-group-level", "subgroup");
     expect(subgroup).toHaveClass("region-frame--level-subgroup");
     expect(rendered.container.querySelector(".region-frame__subgroup-field")).toBeInTheDocument();
-    expect(rendered.container.querySelector(".region-frame__subject-texture")).not.toBeInTheDocument();
+    expect(rendered.container.querySelector(".region-frame__subject-frame")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Move Linear regression subgroup")).toHaveAttribute("data-title-attachment", "contour");
     expect(screen.getByLabelText("Move Linear regression subgroup")).toHaveAttribute("data-title-level", "subgroup");
     expect(screen.getByLabelText("Move Linear regression subgroup")).toHaveStyle({ maxWidth: "320px" });
@@ -508,6 +604,8 @@ describe("RegionFrameNode", () => {
       120,
       142,
       154,
+      false,
+      false,
     );
     expect(data.onTitleDrag).toHaveBeenCalledWith(
       "linear-models",
@@ -515,6 +613,8 @@ describe("RegionFrameNode", () => {
       34,
       142,
       154,
+      false,
+      false,
     );
     expect(data.onTitleDragEnd).toHaveBeenCalledWith(
       "linear-models",
@@ -522,6 +622,8 @@ describe("RegionFrameNode", () => {
       34,
       142,
       154,
+      false,
+      false,
     );
   });
 
@@ -534,8 +636,8 @@ describe("RegionFrameNode", () => {
     fireEvent.pointerMove(handle, { pointerId: 19, clientX: 128, clientY: 106 });
     fireEvent.pointerUp(handle, { pointerId: 19, clientX: 128, clientY: 106 });
 
-    expect(data.onTitleDrag).toHaveBeenCalledWith("linear-models", 56, -28, 128, 106);
-    expect(data.onTitleDragEnd).toHaveBeenCalledWith("linear-models", 56, -28, 128, 106);
+    expect(data.onTitleDrag).toHaveBeenCalledWith("linear-models", 56, -28, 128, 106, false, false);
+    expect(data.onTitleDragEnd).toHaveBeenCalledWith("linear-models", 56, -28, 128, 106, false, false);
   });
 
   it("cancels a captured title drag without committing its final position", () => {

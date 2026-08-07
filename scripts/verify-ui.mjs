@@ -149,7 +149,8 @@ const uiFixture = {
     height: 900,
     color: "#238636",
     shape: "rectangle",
-    borderStyle: "double",
+    borderStyle: "solid",
+    borderWeight: "regular",
     titlePosition: "top-left",
     titleFontSize: 34,
   }],
@@ -477,7 +478,10 @@ try {
     const dot = document.querySelector(".react-flow__background pattern circle");
     const firstSubjectNode = document.querySelector(".region-frame--level-subject");
     const firstSubject = firstSubjectNode?.querySelector(".region-frame__shape");
-    const firstSubjectTexture = firstSubjectNode?.querySelector(".region-frame__subject-texture");
+    const firstSubjectTitle = firstSubjectNode
+      ? document.querySelector(`[data-region-title="${firstSubjectNode.getAttribute("data-testid")?.replace(/^group-/, "")}"]`)
+      : undefined;
+    const firstSubjectIcon = firstSubjectTitle?.querySelector(".region-frame__subject-icon");
     const selected = document.querySelector(".landmark-node.is-selected");
     const selectedShape = selected?.querySelector(".landmark-node__shape");
     const selectedRing = selected?.querySelector(".landmark-node__selection-ring");
@@ -495,10 +499,16 @@ try {
       subjectFill: firstSubject ? getComputedStyle(firstSubject).fill : undefined,
       subjectFillOpacity: firstSubject ? Number.parseFloat(getComputedStyle(firstSubject).fillOpacity) : 1,
       subjectStroke: firstSubject ? getComputedStyle(firstSubject).stroke : undefined,
-      subjectTexture: Boolean(firstSubjectTexture),
-      subjectTexturePath: firstSubjectTexture?.getAttribute("d"),
-      subjectShapePath: firstSubject?.getAttribute("d"),
-      subjectTexturePointerEvents: firstSubjectTexture ? getComputedStyle(firstSubjectTexture).pointerEvents : undefined,
+      subjectStrokeOpacity: firstSubject ? Number.parseFloat(getComputedStyle(firstSubject).strokeOpacity) : 0,
+      subjectStrokeWidth: firstSubject ? Number.parseFloat(getComputedStyle(firstSubject).strokeWidth) : 0,
+      subjectFrameStyle: firstSubjectNode?.getAttribute("data-subject-frame-style"),
+      subjectDecorationCount: firstSubjectNode?.querySelectorAll(".region-frame__subject-frame, .region-frame__subject-texture, linearGradient, pattern").length,
+      subjectTitleTreatment: firstSubjectTitle?.getAttribute("data-title-treatment"),
+      subjectTitleMinHeight: firstSubjectTitle ? Number.parseFloat(getComputedStyle(firstSubjectTitle).minHeight) : 0,
+      subjectIcon: firstSubjectIcon?.getAttribute("data-subject-icon"),
+      subjectIconWidth: firstSubjectIcon ? Number.parseFloat(getComputedStyle(firstSubjectIcon).width) : 0,
+      subjectIconHeight: firstSubjectIcon ? Number.parseFloat(getComputedStyle(firstSubjectIcon).height) : 0,
+      subjectIconSvg: Boolean(firstSubjectIcon?.querySelector("svg")),
       selectedShapePath: selectedShape?.getAttribute("d"),
       selectedRingPath: selectedRing?.getAttribute("d"),
       selectedRingWidth: selectedRing ? Number.parseFloat(getComputedStyle(selectedRing).strokeWidth) : 0,
@@ -510,13 +520,20 @@ try {
   assert(!/Times New Roman/i.test(visualSystem.fileFont), "File navigation must use the UI typeface, not the mathematical typeface.");
   assert(/Times New Roman/i.test(visualSystem.nodeFont), "Mathematical landmarks must use the requested Times face.");
   assert(["#111418", "rgb(17, 20, 24)"].includes(visualSystem.dotFill?.toLowerCase()), `Grid dots must be dark ink (received ${visualSystem.dotFill}).`);
-  assert(visualSystem.subjectFill === "none" && visualSystem.subjectFillOpacity === 0, "Subjects must remain uncoloured beneath their sparse texture.");
+  assert(visualSystem.subjectFill === "none" && visualSystem.subjectFillOpacity === 0, "Subjects must remain uncoloured inside their perimeter frame.");
   assert(visualSystem.subjectStroke === "rgb(77, 85, 94)", `Subjects must use a neutral overview stroke (received ${visualSystem.subjectStroke}).`);
   assert(
-    visualSystem.subjectTexture &&
-      visualSystem.subjectTexturePath === visualSystem.subjectShapePath &&
-      visualSystem.subjectTexturePointerEvents === "none",
-    `Subject texture must cover the exact territory without owning input (${JSON.stringify(visualSystem)}).`,
+      visualSystem.subjectFrameStyle === "double-rule" &&
+      visualSystem.subjectDecorationCount === 0 &&
+      visualSystem.subjectStrokeOpacity >= .5 &&
+      visualSystem.subjectStrokeWidth >= 1.5 &&
+      visualSystem.subjectTitleTreatment === "subject" &&
+      visualSystem.subjectTitleMinHeight >= 78 &&
+      visualSystem.subjectIcon === visualSystem.subjectFrameStyle &&
+      visualSystem.subjectIconWidth === 54 &&
+      visualSystem.subjectIconHeight === 54 &&
+      visualSystem.subjectIconSvg,
+    `Subjects must use a regular neutral cloud and a substantial icon title card (${JSON.stringify(visualSystem)}).`,
   );
   assert(visualSystem.bodyCursor.includes("pointer.svg"), "The shell must use the designed pointer cursor.");
   assert(visualSystem.paneCursor.includes("pointer.svg"), "Blank canvas must advertise left-button selection; right-drag panning is handled separately.");
@@ -652,7 +669,7 @@ try {
   await searchInput.press("Escape");
 
   phase("panel controls");
-  /* Resizable and hideable sidebars. */
+  /* The file pane is persistent; the note pane follows the active note. */
   const fileSidebar = page.locator("#file-sidebar");
   const fileWidthBefore = (await fileSidebar.boundingBox()).width;
   const fileResizer = page.getByRole("separator", { name: "Resize file sidebar" });
@@ -665,7 +682,10 @@ try {
   const fileWidthAfter = (await fileSidebar.boundingBox()).width;
   assert(fileWidthAfter >= fileWidthBefore + 55, "Dragging the file divider must resize the sidebar in sync with the pointer.");
 
+  await selectedFileRow.click();
   const noteSidebar = page.locator("#note-sidebar");
+  await page.waitForFunction(() => document.querySelector("#note-sidebar")?.hasAttribute("hidden") === false);
+  await page.screenshot({ path: path.join(screenshotsDir, "regression-selection-driven-sidebar.png"), fullPage: true });
   const noteWidthBefore = (await noteSidebar.boundingBox()).width;
   const noteResizer = page.getByRole("separator", { name: "Resize note sidebar" });
   const noteResizerBounds = await noteResizer.boundingBox();
@@ -679,17 +699,18 @@ try {
 
   const canvasWidthBefore = (await page.locator(".atlas-workspace").boundingBox()).width;
   await page.getByRole("button", { name: "Hide file sidebar" }).click();
-  await page.getByRole("button", { name: "Hide note sidebar" }).click();
+  await page.getByRole("button", { name: "Close note sidebar" }).click();
   const showFile = page.getByRole("button", { name: "Show file sidebar" });
-  const showNote = page.getByRole("button", { name: "Show note sidebar" });
   await showFile.waitFor();
-  await showNote.waitFor();
+  await page.waitForFunction(() => document.querySelector("#note-sidebar")?.hasAttribute("hidden") === true);
+  assert((await page.getByRole("button", { name: "Show note sidebar" }).count()) === 0, "A cleared note must not leave a dead sidebar restore handle.");
   const canvasWidthExpanded = (await page.locator(".atlas-workspace").boundingBox()).width;
   assert(canvasWidthExpanded >= canvasWidthBefore + 700, "Hiding both panes must give almost the full window to the canvas.");
-  assert((await showFile.boundingBox()).width <= 22 && (await showNote.boundingBox()).width <= 22, "Sidebar restore handles must remain tiny.");
+  assert((await showFile.boundingBox()).width <= 22, "The file sidebar restore handle must remain tiny.");
   await page.screenshot({ path: path.join(screenshotsDir, "regression-canvas-only.png"), fullPage: true });
   await showFile.click();
-  await showNote.click();
+  await selectedFileRow.click();
+  await page.waitForFunction(() => document.querySelector("#note-sidebar")?.hasAttribute("hidden") === false);
 
   phase("canvas creation and hierarchy");
   /* Edge-aware, organized canvas creation palette. */
@@ -773,6 +794,7 @@ try {
     const subjectTitle = subjectId ? document.querySelector(`[data-region-title="${subjectId}"]`) : undefined;
     const createdLabel = createdTitle?.querySelector(".region-frame__title-text");
     const subjectLabel = subjectTitle?.querySelector(".region-frame__title-text");
+    const subjectIcon = subjectTitle?.querySelector(".region-frame__subject-icon");
     const viewport = document.querySelector(".react-flow__viewport");
     const zoom = viewport ? new DOMMatrixReadOnly(getComputedStyle(viewport).transform).a : undefined;
     return {
@@ -784,32 +806,46 @@ try {
       subjectLevel: subjectNode?.getAttribute("data-group-level"),
       subjectClass: subjectNode?.className,
       subjectHasField: Boolean(subjectNode?.querySelector(".region-frame__subject-field")),
-      subjectHasContour: Boolean(subjectNode?.querySelector(".region-frame__subject-contour")),
+      subjectDecorationCount: subjectNode?.querySelectorAll(".region-frame__subject-frame, .region-frame__subject-texture, linearGradient, pattern").length,
       subjectTitleClass: subjectTitle?.closest(".region-title-toolbar")?.className,
+      subjectTitleTreatment: subjectTitle?.getAttribute("data-title-treatment"),
+      subjectTitleMinHeight: subjectTitle ? Number.parseFloat(getComputedStyle(subjectTitle).minHeight) : 0,
       subjectTitleFontSize: subjectLabel ? getComputedStyle(subjectLabel).fontSize : undefined,
       subjectTitleHeight: subjectTitle?.getBoundingClientRect().height,
+      subjectIcon: subjectIcon?.getAttribute("data-subject-icon"),
+      subjectFrameStyle: subjectNode?.getAttribute("data-subject-frame-style"),
+      subjectIconWidth: subjectIcon ? Number.parseFloat(getComputedStyle(subjectIcon).width) : 0,
+      subjectIconHeight: subjectIcon ? Number.parseFloat(getComputedStyle(subjectIcon).height) : 0,
+      subjectIconSvg: Boolean(subjectIcon?.querySelector("svg")),
       zoom,
     };
   }, created.id);
   assert(initialLevelVisuals.createdLevel === "group" && initialLevelVisuals.createdClass?.includes("region-frame--level-group"), "A created Group must expose its hierarchy level in stable DOM attributes and classes.");
   assert(initialLevelVisuals.createdTitleClass?.includes("region-title-toolbar--group"), "Group titles must receive the middle-tier title treatment.");
   assert(initialLevelVisuals.subjectLevel === "subject" && initialLevelVisuals.subjectClass?.includes("region-frame--level-subject"), "Subject territories must expose the top hierarchy level.");
-  assert(initialLevelVisuals.subjectHasField && initialLevelVisuals.subjectHasContour && initialLevelVisuals.subjectTitleClass?.includes("region-title-toolbar--subject"), "Subjects must combine their own field, contour, and title treatment.");
+  assert(initialLevelVisuals.subjectHasField && initialLevelVisuals.subjectDecorationCount === 0 && initialLevelVisuals.subjectTitleClass?.includes("region-title-toolbar--subject"), "Subjects must combine their neutral field with the dedicated icon title treatment and no perimeter decoration.");
   assert(
     initialLevelVisuals.createdTitleFontSize === "28px" &&
-      initialLevelVisuals.subjectTitleFontSize === "34px" &&
+      initialLevelVisuals.subjectTitleFontSize === "42px" &&
       initialLevelVisuals.createdTitleHeight / initialLevelVisuals.zoom >= 40 &&
-      initialLevelVisuals.subjectTitleHeight / initialLevelVisuals.zoom >= 40 &&
+      initialLevelVisuals.subjectTitleHeight / initialLevelVisuals.zoom >= 78 &&
+      initialLevelVisuals.subjectTitleMinHeight >= 78 &&
       initialLevelVisuals.subjectTitleHeight >= initialLevelVisuals.createdTitleHeight,
     `Every hierarchy tier must preserve its authored, group-scaled title metric (${JSON.stringify(initialLevelVisuals)}).`,
+  );
+  assert(
+    initialLevelVisuals.subjectTitleTreatment === "subject" &&
+      initialLevelVisuals.subjectIcon === initialLevelVisuals.subjectFrameStyle &&
+      initialLevelVisuals.subjectIconWidth === 54 &&
+      initialLevelVisuals.subjectIconHeight === 54 &&
+      initialLevelVisuals.subjectIconSvg,
+    `Subject title cards must expose the matching 54px Lucide icon well (${JSON.stringify(initialLevelVisuals)}).`,
   );
 
   phase("group interaction");
   /* The label itself is the group move handle. */
   await page.getByRole("button", { name: "Hide file sidebar" }).click();
-  await page.getByRole("button", { name: "Hide note sidebar" }).click();
   await showFile.waitFor();
-  await showNote.waitFor();
   const groupPositionBeforeTitleDrag = { x: created.x, y: created.y };
   // The new frame can be larger than the currently visible part of its Subject.
   // Focus it first so the title drag exercises a real, unobscured pointer path.
@@ -961,51 +997,51 @@ try {
   const subjectTreatment = await groupNode.evaluate((node) => {
     const title = document.querySelector(`[data-region-title="${node.getAttribute("data-testid")?.replace(/^group-/, "")}"]`);
     const shape = node.querySelector(".region-frame__shape");
-    const texture = node.querySelector(".region-frame__subject-texture");
-    const textureMark = node.querySelector(".region-frame__subject-texture-mark");
     const titleMark = title?.querySelector(".region-frame__title-mark");
     const titleLabel = title?.querySelector(".region-frame__title-text");
+    const subjectIcon = title?.querySelector(".region-frame__subject-icon");
     return {
       className: node.className,
       field: Boolean(node.querySelector(".region-frame__subject-field")),
-      contour: Boolean(node.querySelector(".region-frame__subject-contour")),
+      frameStyle: node.getAttribute("data-subject-frame-style"),
+      decorationCount: node.querySelectorAll(".region-frame__subject-frame, .region-frame__subject-texture, linearGradient, pattern").length,
       subgroupField: Boolean(node.querySelector(".region-frame__subgroup-field")),
       titleClass: title?.closest(".region-title-toolbar")?.className,
+      titleTreatment: title?.getAttribute("data-title-treatment"),
+      titleMinHeight: title ? Number.parseFloat(getComputedStyle(title).minHeight) : 0,
       shapeFill: shape ? getComputedStyle(shape).fill : undefined,
+      shapeFillOpacity: shape ? Number.parseFloat(getComputedStyle(shape).fillOpacity) : 1,
       shapeStroke: shape ? getComputedStyle(shape).stroke : undefined,
+      shapeStrokeOpacity: shape ? Number.parseFloat(getComputedStyle(shape).strokeOpacity) : 0,
       shapeStrokeWidth: shape ? Number.parseFloat(getComputedStyle(shape).strokeWidth) : 0,
-      texture: Boolean(texture),
-      texturePath: texture?.getAttribute("d"),
-      textureFill: texture ? getComputedStyle(texture).fill : undefined,
-      texturePointerEvents: texture ? getComputedStyle(texture).pointerEvents : undefined,
-      textureStroke: textureMark ? getComputedStyle(textureMark).stroke : undefined,
-      textureStrokeOpacity: textureMark ? Number.parseFloat(getComputedStyle(textureMark).strokeOpacity) : 1,
-      textureStrokeWidth: textureMark ? Number.parseFloat(getComputedStyle(textureMark).strokeWidth) : 0,
-      shapePath: shape?.getAttribute("d"),
       titleLetterSpacing: titleLabel ? getComputedStyle(titleLabel).letterSpacing : undefined,
       titleTransform: titleLabel ? getComputedStyle(titleLabel).textTransform : undefined,
       titleHasMark: Boolean(titleMark),
+      subjectIcon: subjectIcon?.getAttribute("data-subject-icon"),
+      subjectIconWidth: subjectIcon ? Number.parseFloat(getComputedStyle(subjectIcon).width) : 0,
+      subjectIconHeight: subjectIcon ? Number.parseFloat(getComputedStyle(subjectIcon).height) : 0,
+      subjectIconSvg: Boolean(subjectIcon?.querySelector("svg")),
     };
   });
-  assert(subjectTreatment.className.includes("region-frame--level-subject") && subjectTreatment.field && subjectTreatment.contour && !subjectTreatment.subgroupField, "Subject level must render the dedicated territory layers.");
-  assert(subjectTreatment.shapeFill === "none" && subjectTreatment.shapeStroke === "rgb(77, 85, 94)", "Subject level must remain neutral and unfilled after conversion.");
+  assert(subjectTreatment.className.includes("region-frame--level-subject") && subjectTreatment.field && subjectTreatment.decorationCount === 0 && !subjectTreatment.subgroupField, "Subject level must render one neutral cloud with no decorative frame resources.");
+  assert(subjectTreatment.shapeFill === "none" && subjectTreatment.shapeFillOpacity === 0 && subjectTreatment.shapeStroke === "rgb(77, 85, 94)", "Subject level must remain neutral and unfilled after conversion.");
   assert(
-    subjectTreatment.texture &&
-      subjectTreatment.texturePath === subjectTreatment.shapePath &&
-      subjectTreatment.textureFill?.startsWith("url(") &&
-      subjectTreatment.texturePointerEvents === "none" &&
-      subjectTreatment.textureStroke === "rgb(77, 85, 94)" &&
-      subjectTreatment.textureStrokeOpacity >= .04 &&
-      subjectTreatment.textureStrokeOpacity <= .1 &&
-      subjectTreatment.textureStrokeWidth <= 1.3,
-    `Subject texture must stay sparse, neutral, shape-clipped, and non-interactive (${JSON.stringify(subjectTreatment)}).`,
+    subjectTreatment.frameStyle === "double-rule" &&
+      subjectTreatment.shapeStrokeOpacity >= .5 &&
+      subjectTreatment.shapeStrokeWidth >= 1.5,
+    `Subject cloud stroke must stay visible, regular, and neutral (${JSON.stringify(subjectTreatment)}).`,
   );
   assert(
     subjectTreatment.titleClass?.includes("region-title-toolbar--subject") &&
-      subjectTreatment.shapeStrokeWidth >= 1.45 &&
-      subjectTreatment.titleTransform === "uppercase" &&
-      !subjectTreatment.titleHasMark,
-    `Subject level must use a clean neutral heading without a title emblem (${JSON.stringify(subjectTreatment)}).`,
+      subjectTreatment.titleTreatment === "subject" &&
+      subjectTreatment.titleMinHeight >= 78 &&
+      subjectTreatment.titleTransform === "none" &&
+      !subjectTreatment.titleHasMark &&
+      subjectTreatment.subjectIcon === subjectTreatment.frameStyle &&
+      subjectTreatment.subjectIconWidth === 54 &&
+      subjectTreatment.subjectIconHeight === 54 &&
+      subjectTreatment.subjectIconSvg,
+    `Subject level must use a substantial icon title card (${JSON.stringify(subjectTreatment)}).`,
   );
 
   await levelPicker.getByRole("button", { name: "Subgroup", exact: true }).click();
@@ -1016,7 +1052,7 @@ try {
     return {
       className: node.className,
       subjectField: Boolean(node.querySelector(".region-frame__subject-field")),
-      subjectTexture: Boolean(node.querySelector(".region-frame__subject-texture")),
+      subjectFrame: Boolean(node.querySelector(".region-frame__subject-frame")),
       subgroupField: Boolean(node.querySelector(".region-frame__subgroup-field")),
       titleClass: title?.closest(".region-title-toolbar")?.className,
       titleColor: titleLabel ? getComputedStyle(titleLabel).color : undefined,
@@ -1029,7 +1065,7 @@ try {
       shapeStrokeWidth: Number.parseFloat(getComputedStyle(node.querySelector(".region-frame__shape")).strokeWidth),
     };
   });
-  assert(subgroupTreatment.className.includes("region-frame--level-subgroup") && subgroupTreatment.subgroupField && !subgroupTreatment.subjectField && !subgroupTreatment.subjectTexture, "Subgroup level must render its dedicated subordinate field without retaining the Subject texture.");
+  assert(subgroupTreatment.className.includes("region-frame--level-subgroup") && subgroupTreatment.subgroupField && !subgroupTreatment.subjectField && !subgroupTreatment.subjectFrame, "Subgroup level must render its dedicated subordinate field without retaining the Subject frame architecture.");
   assert(subgroupTreatment.titleClass?.includes("region-title-toolbar--subgroup") && subgroupTreatment.shapeStrokeWidth <= 1.2, "Subgroup level must use its own precise title and frame treatment.");
   assert(subgroupTreatment.titleFontSize === "28px" && subgroupTreatment.titleHeight / subgroupTreatment.zoom >= 40, "Subgroup titles must preserve the same larger group-scaled metric as Subject and Group titles.");
   await page.screenshot({ path: path.join(screenshotsDir, "regression-group-hierarchy.png"), fullPage: true });
@@ -1298,12 +1334,14 @@ try {
   const landmarkBeforeResize = beforeResizeState.customLandmarks.find(({ id }) => id === visibleLandmarkId) ?? beforeResizeState.landmarks[visibleLandmarkId];
   const landmarkResizeBounds = await landmarkNode.boundingBox();
   const landmarkResizePoint = {
-    x: landmarkResizeBounds.x + landmarkResizeBounds.width * .85,
+    // Selecting the note reveals the inspector, so exercise the still-visible
+    // upper-left contour rather than a right edge that can sit beneath it.
+    x: landmarkResizeBounds.x + landmarkResizeBounds.width * .15,
     y: landmarkResizeBounds.y + landmarkResizeBounds.height * .15,
   };
   await page.mouse.move(landmarkResizePoint.x, landmarkResizePoint.y);
   await page.mouse.down();
-  await page.mouse.move(landmarkResizePoint.x + 56, landmarkResizePoint.y - 28, { steps: 8 });
+  await page.mouse.move(landmarkResizePoint.x - 56, landmarkResizePoint.y - 28, { steps: 8 });
   await page.mouse.up();
   await page.waitForFunction(({ id, width, height }) => {
     const key = Object.keys(localStorage).find((candidate) => candidate.startsWith("math-atlas:map-customizations:"));
@@ -1435,7 +1473,6 @@ try {
   phase("editor and viewport persistence");
   /* Real caret editing with live compiled mathematics. */
   await showFile.click();
-  await showNote.click();
   await page.getByRole("treeitem", { name: qaEditorNoteName.replace(/\.md$/i, ""), exact: true }).click();
   const editableInlineFormulae = page.locator(".live-note-editor .editable-math--inline");
   await page.waitForFunction(

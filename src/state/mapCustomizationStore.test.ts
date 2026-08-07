@@ -10,6 +10,7 @@ import {
   clearMapCustomizations,
   emptyMapCustomizations,
   loadMapCustomizations,
+  resolveGroupShape,
   saveMapCustomizations,
   defaultGroupBorderWeight,
   defaultGroupFillOpacity,
@@ -58,6 +59,9 @@ describe("mapCustomizationStore", () => {
     expect(defaultGroupBorderWeight("subject")).toBe("strong");
     expect(defaultGroupBorderWeight("group")).toBe("regular");
     expect(defaultGroupBorderWeight("subgroup")).toBe("hairline");
+    expect(resolveGroupShape("subject", "triangle")).toBe("rounded-rectangle");
+    expect(resolveGroupShape("group", "triangle")).toBe("triangle");
+    expect(resolveGroupShape("subgroup", "rhombus")).toBe("rhombus");
     expect(DEFAULT_GROUP_COLOR).toBe("#92989F");
   });
 
@@ -84,6 +88,55 @@ describe("mapCustomizationStore", () => {
     const loaded = loadMapCustomizations(snapshotKey);
     expect(loaded.groups.legacyRegion.color).toBe(DEFAULT_GROUP_COLOR);
     expect(loaded.customGroups[0].color).toBe(DEFAULT_GROUP_COLOR);
+  });
+
+  it("round-trips valid subject frame styles only on custom groups", () => {
+    const candidate = {
+      ...emptyMapCustomizations(snapshotKey),
+      groups: {
+        derived: { subjectFrameStyle: "triple-rule" },
+      },
+      customGroups: [
+        {
+          id: "styled-subject",
+          title: "Styled subject",
+          subjectId: "synthetic-subject",
+          level: "subject",
+          x: 0,
+          y: 0,
+          width: 1120,
+          height: 700,
+          color: "#92989F",
+          shape: "rectangle",
+          subjectFrameStyle: "corner-brackets",
+        },
+        {
+          id: "invalid-style-subject",
+          title: "Invalid style subject",
+          subjectId: "synthetic-subject-two",
+          level: "subject",
+          x: 1400,
+          y: 0,
+          width: 1120,
+          height: 700,
+          color: "#92989F",
+          shape: "rectangle",
+          subjectFrameStyle: "unknown-frame",
+        },
+      ],
+    } as unknown as MapCustomizations;
+
+    expect(saveMapCustomizations(candidate)).toBe(true);
+    const loaded = loadMapCustomizations(snapshotKey);
+
+    expect(loaded.groups.derived).toEqual({});
+    expect(loaded.customGroups[0]).toMatchObject({
+      id: "styled-subject",
+      shape: "rectangle",
+      subjectFrameStyle: "corner-brackets",
+    });
+    expect(loaded.customGroups[1]).toMatchObject({ id: "invalid-style-subject" });
+    expect(loaded.customGroups[1]).not.toHaveProperty("subjectFrameStyle");
   });
 
   it("round-trips customizations whose snapshot key has surrounding whitespace", () => {

@@ -17,6 +17,11 @@ export interface DesktopCanvasDragEvent {
   finalizerSurfaceId?: string;
   nodeId: string;
   nodeKind: "landmark" | "group";
+  /** Immutable explicit canvas selection used to rebuild a mixed drag closure. */
+  selectionNodeIds?: string[];
+  /** Transfer the owner's active drafting constraints across monitor WebViews. */
+  smartSnapDisabled?: boolean;
+  axisLock?: "x" | "y";
   phase: DesktopCanvasDragPhase;
   startPointer: DesktopCanvasPoint;
   pointer: DesktopCanvasPoint;
@@ -41,6 +46,12 @@ function boundedId(value: unknown) {
   return typeof value === "string" && value.length > 0 && value.length <= 512;
 }
 
+function boundedUniqueIds(value: unknown): value is string[] {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 512) return false;
+  if (!value.every(boundedId)) return false;
+  return new Set(value).size === value.length;
+}
+
 export function isDesktopCanvasDragEvent(
   value: unknown,
 ): value is DesktopCanvasDragEvent {
@@ -51,6 +62,12 @@ export function isDesktopCanvasDragEvent(
     (event.finalizerSurfaceId === undefined || boundedId(event.finalizerSurfaceId)) &&
     boundedId(event.nodeId) &&
     (event.nodeKind === "landmark" || event.nodeKind === "group") &&
+    (event.selectionNodeIds === undefined || (
+      boundedUniqueIds(event.selectionNodeIds) &&
+      event.selectionNodeIds.includes(event.nodeId as string)
+    )) &&
+    (event.smartSnapDisabled === undefined || typeof event.smartSnapDisabled === "boolean") &&
+    (event.axisLock === undefined || event.axisLock === "x" || event.axisLock === "y") &&
     phases.has(event.phase as DesktopCanvasDragPhase) &&
     finitePoint(event.startPointer) &&
     finitePoint(event.pointer);

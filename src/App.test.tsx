@@ -7,6 +7,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
   waitFor,
 } from "@testing-library/react";
 
@@ -177,7 +178,10 @@ vi.mock("./components/AtlasGraph", () => ({
     searchMatchIds?: ReadonlySet<string>;
     previewMarkdownByLandmarkId?: ReadonlyMap<string, string>;
     autoEditNoteId?: string;
+    selectedLandmarkId?: string;
+    selectedContentPath?: string;
     onSelectLandmark: (landmark: { id: string; title: string }) => void;
+    onClearActiveSelection?: () => void;
     onBeginNoteEdit?: (landmark: { id: string; title: string }) => void;
     onSaveNote?: (landmark: { id: string; title: string }, markdown: string) => Promise<void>;
     onPlacementChange: (placement: { landmarkId: string; x: number; y: number }) => void;
@@ -238,6 +242,7 @@ vi.mock("./components/AtlasGraph", () => ({
     previewMarkdownByLandmarkId,
     autoEditNoteId,
     onSelectLandmark,
+    onClearActiveSelection,
     onBeginNoteEdit,
     onSaveNote,
     onPlacementChange,
@@ -285,6 +290,11 @@ vi.mock("./components/AtlasGraph", () => ({
           {landmark.title}
         </button>
       ))}
+      {onClearActiveSelection && (
+        <button data-testid="simulate-clear-selection" onClick={onClearActiveSelection}>
+          Clear canvas selection
+        </button>
+      )}
       {landmarks[0] && (
         <button
           data-testid="simulate-drag-stop"
@@ -508,8 +518,9 @@ describe("App", () => {
     expect(repository.listTree).toHaveBeenCalled();
   });
 
-  it("starts without product branding and exposes accessible sidebar dividers", () => {
-    render(<App />);
+  it("starts unselected and opens an accessible note sidebar from a note click", async () => {
+    localStorage.setItem("math-atlas:panel-visible:inspector", "false");
+    const { container } = render(<App />);
 
     expect(screen.queryByText(/^Math Atlas$/i)).not.toBeInTheDocument();
     expect(
@@ -521,13 +532,32 @@ describe("App", () => {
     const fileDivider = screen.getByRole("separator", {
       name: "Resize file sidebar",
     });
+    expect(fileDivider).toHaveAttribute("data-panel-resizer", "file-sidebar");
+    expect(fileDivider).toHaveAttribute("aria-valuenow", "246");
+    expect(container.querySelector("#note-sidebar")).toHaveAttribute("hidden");
+    expect(screen.queryByRole("separator", { name: "Resize note sidebar" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show note sidebar" }))
+      .not.toBeInTheDocument();
+
+    fireEvent.click(await within(await screen.findByTestId("atlas-graph")).findByRole(
+      "button",
+      { name: "Public Fixture Note Beta" },
+    ));
+
     const noteDivider = screen.getByRole("separator", {
       name: "Resize note sidebar",
     });
-    expect(fileDivider).toHaveAttribute("data-panel-resizer", "file-sidebar");
-    expect(fileDivider).toHaveAttribute("aria-valuenow", "246");
     expect(noteDivider).toHaveAttribute("data-panel-resizer", "inspector");
     expect(noteDivider).toHaveAttribute("aria-valuenow", "548");
+    expect(container.querySelector("#note-sidebar")).not.toHaveAttribute("hidden");
+
+    fireEvent.click(screen.getByTestId("simulate-clear-selection"));
+    expect(container.querySelector("#note-sidebar")).toHaveAttribute("hidden");
+    expect(atlasGraphCapture.props?.selectedLandmarkId).toBeUndefined();
+    expect(atlasGraphCapture.props?.selectedContentPath).toBeUndefined();
+    expect(screen.queryByRole("button", { name: "Show note sidebar" }))
+      .not.toBeInTheDocument();
   });
 
   it("enters a chrome-free desktop surface without changing workspace preferences", async () => {
@@ -544,7 +574,7 @@ describe("App", () => {
     );
     expect(desktopSurfaceMock.onChange).toHaveBeenCalledTimes(1);
     expect(container.querySelector("#file-sidebar")).toHaveAttribute("hidden");
-    expect(container.querySelector("#note-sidebar")).not.toHaveAttribute("hidden");
+    expect(container.querySelector("#note-sidebar")).toHaveAttribute("hidden");
 
     fireEvent.click(enter);
 
@@ -564,10 +594,16 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Show workspace chrome" }));
     expect(container.querySelector("#file-sidebar")).not.toHaveAttribute("hidden");
-    expect(container.querySelector("#note-sidebar")).not.toHaveAttribute("hidden");
+    expect(container.querySelector("#note-sidebar")).toHaveAttribute("hidden");
     expect(screen.getByRole("button", { name: "Search notes" })).toBeInTheDocument();
     expect(localStorage.getItem("math-atlas:panel-visible:file-sidebar")).toBe("false");
     expect(localStorage.getItem("math-atlas:panel-visible:inspector")).toBe("true");
+
+    fireEvent.click(await within(screen.getByTestId("atlas-graph")).findByRole(
+      "button",
+      { name: "Public Fixture Note Beta" },
+    ));
+    expect(container.querySelector("#note-sidebar")).not.toHaveAttribute("hidden");
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(desktopSurfaceMock.exit).not.toHaveBeenCalled();
@@ -750,14 +786,14 @@ describe("App", () => {
     );
   });
 
-  it("hides and restores both sidebars while expanding the map grid", async () => {
+  it("persists the file sidebar while the note sidebar follows selection", async () => {
     const { container } = render(<App />);
     const appShell = container.querySelector<HTMLElement>(".app-shell")!;
     const workspace = container.querySelector<HTMLElement>(".workspace-content")!;
     const fileSidebar = container.querySelector<HTMLElement>("#file-sidebar")!;
     const noteSidebar = container.querySelector<HTMLElement>("#note-sidebar")!;
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide file sidebar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Hide file sidebar" }));
 
     expect(fileSidebar).toHaveAttribute("hidden");
     expect(
@@ -780,20 +816,34 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "Show file sidebar" }))
       .not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide note sidebar" }));
+    expect(noteSidebar).toHaveAttribute("hidden");
+    fireEvent.click(await within(screen.getByTestId("atlas-graph")).findByRole(
+      "button",
+      { name: "Public Fixture Note Beta" },
+    ));
+    expect(noteSidebar).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("separator", { name: "Resize note sidebar" }))
+      .toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close note sidebar" }));
 
     expect(noteSidebar).toHaveAttribute("hidden");
     expect(
       screen.queryByRole("separator", { name: "Resize note sidebar" }),
     ).not.toBeInTheDocument();
-    const showNote = screen.getByRole("button", {
-      name: "Show note sidebar",
-    });
-    expect(showNote).toHaveClass("sidebar-restore", "sidebar-restore--right");
-    expect(showNote).toHaveAttribute("aria-controls", "note-sidebar");
+    expect(screen.queryByRole("button", { name: "Show note sidebar" }))
+      .not.toBeInTheDocument();
     expect(workspace.style.gridTemplateColumns).toBe("minmax(0, 1fr) 0 0");
+    expect(atlasGraphCapture.props?.selectedLandmarkId).toBe("fixture-azure-corollary");
+    expect(atlasGraphCapture.props?.selectedContentPath).toBe(
+      "Synthetic Field/Public Examples/Fixture Collection/Public Fixture Note Beta.md",
+    );
+    await waitFor(() => expect(container.querySelector(".atlas-workspace")).toHaveFocus());
 
-    fireEvent.click(showNote);
+    fireEvent.click(within(screen.getByTestId("atlas-graph")).getByRole(
+      "button",
+      { name: "Public Fixture Note Beta" },
+    ));
     expect(noteSidebar).not.toHaveAttribute("hidden");
     expect(
       screen.getByRole("separator", { name: "Resize note sidebar" }),
@@ -804,6 +854,58 @@ describe("App", () => {
     await screen.findByRole("treeitem", { name: "Synthetic Field" });
   });
 
+  it("finishes a cold note load after dismissing and reopening the same sidebar", async () => {
+    const path = "Synthetic Field/Public Examples/Fixture Collection/Public Fixture Note Beta.md";
+    let resolveRead: ((document: {
+      path: string;
+      markdown: string;
+      revision: string;
+    }) => void) | undefined;
+    repository.readNote.mockImplementation((requestedPath: string) => {
+      if (requestedPath !== path) {
+        return Promise.resolve({
+          path: requestedPath,
+          markdown: `Fixture text for ${requestedPath}`,
+          revision: `revision:${requestedPath}`,
+        });
+      }
+      return new Promise((resolve) => {
+        resolveRead = resolve;
+      });
+    });
+
+    const { container } = render(<App />);
+    const noteSidebar = container.querySelector<HTMLElement>("#note-sidebar")!;
+    const noteButton = await within(await screen.findByTestId("atlas-graph")).findByRole(
+      "button",
+      { name: "Public Fixture Note Beta" },
+    );
+
+    fireEvent.click(noteButton);
+    await waitFor(() => expect(repository.readNote).toHaveBeenCalledWith(path));
+    expect(noteSidebar).not.toHaveAttribute("hidden");
+    expect(screen.getByLabelText("Loading Markdown file")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close note sidebar" }));
+    expect(noteSidebar).toHaveAttribute("hidden");
+    fireEvent.click(noteButton);
+    expect(noteSidebar).not.toHaveAttribute("hidden");
+    expect(screen.getByLabelText("Loading Markdown file")).toBeInTheDocument();
+    expect(repository.readNote).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveRead?.({
+        path,
+        markdown: "Cold note finished loading",
+        revision: "revision:cold-note",
+      });
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Cold note finished loading")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Loading Markdown file")).not.toBeInTheDocument();
+  });
+
   it("selects a mapped note and its real file on the first click", async () => {
     render(<App />);
 
@@ -811,12 +913,15 @@ describe("App", () => {
     expect(screen.queryByTestId("mode-trail")).not.toBeInTheDocument();
     expect(screen.queryByText(/models, optimisation, generalisation/i)).not.toBeInTheDocument();
 
+    fireEvent.click(
+      await within(screen.getByTestId("atlas-graph")).findByRole(
+        "button",
+        { name: "Public Fixture Note Beta" },
+      ),
+    );
     const geometricFile = await screen.findByRole("treeitem", {
       name: "Public Fixture Note Beta",
     });
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Public Fixture Note Beta" }),
-    );
     expect(geometricFile).toHaveAttribute("aria-selected", "true");
     expect(
       screen.getByRole("heading", { level: 2, name: "Public Fixture Note Beta" }),

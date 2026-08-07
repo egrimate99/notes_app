@@ -336,6 +336,8 @@ export function objectShapePortAnchors(
   const centerX = safeWidth / 2;
   let leftX = x0;
   let rightX = x1;
+  let topX = centerX;
+  let bottomX = centerX;
 
   if (shape === "triangle") {
     leftX = (x0 + centerX) / 2;
@@ -343,12 +345,17 @@ export function objectShapePortAnchors(
   } else if (shape === "parallelogram") {
     leftX = x0 + slant / 2;
     rightX = x1 - slant / 2;
+    // Use the visual midpoint of each slanted frame edge. Keeping both at the
+    // bounding-box centre makes vertically aligned parallelograms terminate
+    // their arrows at different relative points and appear subtly crooked.
+    topX = (x0 + slant + x1) / 2;
+    bottomX = (x0 + x1 - slant) / 2;
   }
 
   return {
-    top: { x: 50, y: percentage(y0, safeHeight) },
+    top: { x: percentage(topX, safeWidth), y: percentage(y0, safeHeight) },
     right: { x: percentage(rightX, safeWidth), y: 50 },
-    bottom: { x: 50, y: percentage(y1, safeHeight) },
+    bottom: { x: percentage(bottomX, safeWidth), y: percentage(y1, safeHeight) },
     left: { x: percentage(leftX, safeWidth), y: 50 },
   };
 }

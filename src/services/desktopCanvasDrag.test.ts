@@ -32,4 +32,35 @@ describe("desktop canvas drag packets", () => {
       .toBe(false);
     expect(isDesktopCanvasDragEvent({ ...event, nodeId: "" })).toBe(false);
   });
+
+  it("carries one bounded, unique mixed selection across monitor surfaces", () => {
+    const selectionNodeIds = [
+      event.nodeId,
+      "custom-group:linear-models",
+      "landmark-2",
+    ];
+    expect(isDesktopCanvasDragEvent({ ...event, selectionNodeIds })).toBe(true);
+    expect(isDesktopCanvasDragEvent({
+      ...event,
+      selectionNodeIds: [event.nodeId, event.nodeId],
+    })).toBe(false);
+    expect(isDesktopCanvasDragEvent({
+      ...event,
+      selectionNodeIds: ["landmark-2", "landmark-3"],
+    })).toBe(false);
+    expect(isDesktopCanvasDragEvent({
+      ...event,
+      selectionNodeIds: Array.from({ length: 513 }, (_, index) => `node-${index}`),
+    })).toBe(false);
+  });
+
+  it("carries bounded drafting constraints between monitor surfaces", () => {
+    expect(isDesktopCanvasDragEvent({
+      ...event,
+      smartSnapDisabled: true,
+      axisLock: "x",
+    })).toBe(true);
+    expect(isDesktopCanvasDragEvent({ ...event, smartSnapDisabled: "yes" })).toBe(false);
+    expect(isDesktopCanvasDragEvent({ ...event, axisLock: "diagonal" })).toBe(false);
+  });
 });

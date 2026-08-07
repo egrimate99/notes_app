@@ -1,12 +1,21 @@
 import {
   memo,
   useEffect,
-  useId,
   useRef,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import {
+  BrainCircuit,
+  ChartCandlestick,
+  ChartScatter,
+  ChartSpline,
+  ChessKnight,
+  Dices,
+  VectorSquare,
+  type LucideIcon,
+} from "lucide-react";
 import {
   Handle,
   Position,
@@ -15,12 +24,18 @@ import {
   type NodeProps,
   type ResizeParams,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
 import {
   objectShapeGlyph,
   objectShapeTitleGeometry,
   type GroupShape,
 } from "../domain/mapAppearance";
+import {
+  DEFAULT_SUBJECT_FRAME_STYLE,
+  isSubjectFrameStyle,
+  type SubjectFrameStyle,
+} from "../domain/subjectFrameStyle";
 import type {
   GroupBorderStyle,
   GroupBorderWeight,
@@ -31,6 +46,7 @@ import {
   clampGroupFillOpacity,
   defaultGroupBorderWeight,
   defaultGroupFillOpacity,
+  resolveGroupShape,
 } from "../state/mapCustomizationStore";
 import { framePortStyle } from "./framePortStyle";
 import {
@@ -59,6 +75,7 @@ export interface RegionFrameNodeData extends Record<string, unknown> {
   fillOpacity?: number;
   titlePosition: GroupTitlePosition;
   titleFontSize: number;
+  subjectFrameStyle?: SubjectFrameStyle;
   /** Monotonic signal used to release any pointer capture after Escape. */
   cancelToken: number;
   onRequestSelection: (
@@ -71,6 +88,8 @@ export interface RegionFrameNodeData extends Record<string, unknown> {
     startClientY: number,
     clientX: number,
     clientY: number,
+    shiftKey?: boolean,
+    altKey?: boolean,
   ) => void;
   onTitleDrag: (
     regionId: string,
@@ -78,6 +97,8 @@ export interface RegionFrameNodeData extends Record<string, unknown> {
     deltaY: number,
     clientX: number,
     clientY: number,
+    shiftKey?: boolean,
+    altKey?: boolean,
   ) => void;
   onTitleDragEnd: (
     regionId: string,
@@ -85,6 +106,8 @@ export interface RegionFrameNodeData extends Record<string, unknown> {
     deltaY: number,
     clientX: number,
     clientY: number,
+    shiftKey?: boolean,
+    altKey?: boolean,
   ) => void;
   onTitleDragCancel: (regionId: string) => void;
   onDirectGestureStart: (nodeId: string) => void;
@@ -114,7 +137,9 @@ interface NormalizedPoint {
 
 const GROUP_MIN_WIDTH = 252;
 const GROUP_MIN_HEIGHT = 168;
-const BORDER_HIT_WIDTH = 28;
+const BORDER_SCREEN_HIT_WIDTH = 28;
+const BORDER_OVERVIEW_SCREEN_HIT_WIDTH = 24;
+const BORDER_OVERVIEW_ZOOM = .4;
 const RESIZE_DRAG_THRESHOLD = 2;
 const GRID = 28;
 
@@ -135,8 +160,29 @@ const titleAttachmentTransform: Record<GroupTitlePosition, string> = {
   "middle-left": "translate(0, -50%)",
 };
 
+const subjectTitleAttachmentTransform: Record<GroupTitlePosition, string> = {
+  "top-left": "translate(0, -50%)",
+  "top-center": "translate(-50%, -50%)",
+  "top-right": "translate(-100%, -50%)",
+  "middle-right": "translate(-50%, -50%)",
+  "bottom-right": "translate(-100%, -50%)",
+  "bottom-center": "translate(-50%, -50%)",
+  "bottom-left": "translate(0, -50%)",
+  "middle-left": "translate(-50%, -50%)",
+};
+
+const subjectIconByFrameStyle: Record<SubjectFrameStyle, LucideIcon> = {
+  "double-rule": ChartSpline,
+  "triple-rule": ChartCandlestick,
+  "cardinal-ticks": ChessKnight,
+  "corner-brackets": VectorSquare,
+  "dashed-inset": BrainCircuit,
+  beaded: Dices,
+  "offset-rails": ChartScatter,
+};
+
 const titleMaxWidth: Record<GroupLevel, number> = {
-  subject: 480,
+  subject: 620,
   group: 400,
   subgroup: 320,
 };
@@ -151,8 +197,6 @@ const titleWidthRatio: Record<GroupShape, number> = {
   triangle: .58,
   parallelogram: .7,
 };
-
-const SUBJECT_TEXTURE_PATH = "M0 23Q7 19 14 22M20 22Q29 25 38 21M42 21L44 22";
 
 /**
  * Title plaques echo the territory silhouette without sacrificing a useful
@@ -242,7 +286,6 @@ export const RegionFrameNode = memo(function RegionFrameNode({
   positionAbsoluteY,
   isConnectable,
 }: NodeProps<RegionGraphNode>) {
-  const subjectTexturePatternId = `subject-texture-${useId().replace(/\W/g, "")}`;
   const titleDragRef = useRef<{
     pointerId: number;
     startClientX: number;
@@ -254,6 +297,7 @@ export const RegionFrameNode = memo(function RegionFrameNode({
   const resizeRef = useRef<BorderResizeGesture | undefined>(undefined);
   const cancelTokenRef = useRef(data.cancelToken);
   const { fitView, getZoom, updateNode } = useReactFlow<RegionGraphNode>();
+  const viewportZoom = useStore((state) => state.transform[2]);
   // While resizing, title geometry and proxy ports follow the same live frame
   // as the visible contour. At rest the authored dimensions avoid React
   // Flow's occasionally stale ResizeObserver measurement.
@@ -263,16 +307,31 @@ export const RegionFrameNode = memo(function RegionFrameNode({
   const frameX = liveResize?.x ?? positionAbsoluteX;
   const frameY = liveResize?.y ?? positionAbsoluteY;
   const level: GroupLevel = data.level ?? (data.variant === "subject" ? "subject" : "group");
-  // The frame SVG stretches its 100×100 viewBox to arbitrary territory
-  // bounds. Compensate each pattern axis so a 44px world tile stays square.
-  const subjectTexturePatternWidth = 4400 / Math.max(frameWidth, 1);
-  const subjectTexturePatternHeight = 4400 / Math.max(frameHeight, 1);
+  const shape = resolveGroupShape(level, data.shape);
+  // Stable style identities now select the subject title icon only.
+  const subjectFrameStyle = isSubjectFrameStyle(data.subjectFrameStyle)
+    ? data.subjectFrameStyle
+    : DEFAULT_SUBJECT_FRAME_STYLE;
+  const SubjectIcon = subjectIconByFrameStyle[subjectFrameStyle];
   const borderWeight = data.borderWeight ?? defaultGroupBorderWeight(level);
   const fillOpacity = clampGroupFillOpacity(data.fillOpacity ?? defaultGroupFillOpacity(level));
-  const titleAnchor = shapeTitleAnchors(data.shape)[data.titlePosition];
-  const titleAngle = shapeTitleAngle(data.shape, data.titlePosition, frameWidth, frameHeight);
-  const glyph = regionShapeGlyph(data.shape);
-  const titleFramePath = shapeTitleFramePath(data.shape);
+  const titleAnchor = shapeTitleAnchors(shape)[data.titlePosition];
+  const titleAngle = shapeTitleAngle(shape, data.titlePosition, frameWidth, frameHeight);
+  const glyph = regionShapeGlyph(shape);
+  const titleFramePath = shapeTitleFramePath(shape);
+  // XYFlow zooms the node layer with an outer CSS transform. SVG's
+  // non-scaling-stroke protects the path from its viewBox transform, but not
+  // from that outer transform, so a fixed SVG stroke becomes progressively
+  // harder to acquire as the canvas zooms out. Compensate in local units to
+  // keep the invisible contour a stable screen-space target. The slightly
+  // tighter overview width avoids one tiny group swallowing a neighbour.
+  const normalizedViewportZoom = Number.isFinite(viewportZoom) && viewportZoom > 0
+    ? Math.max(viewportZoom, .01)
+    : 1;
+  const borderScreenHitWidth = normalizedViewportZoom <= BORDER_OVERVIEW_ZOOM
+    ? BORDER_OVERVIEW_SCREEN_HIT_WIDTH
+    : BORDER_SCREEN_HIT_WIDTH;
+  const borderHitWidth = borderScreenHitWidth / normalizedViewportZoom;
   const style = {
     "--group-color": data.color,
     "--region-fill-opacity": fillOpacity,
@@ -284,7 +343,9 @@ export const RegionFrameNode = memo(function RegionFrameNode({
     position: "absolute",
     left: `${titleAnchor.x * 100}%`,
     top: `${titleAnchor.y * 100}%`,
-    transform: titleAttachmentTransform[data.titlePosition],
+    transform: level === "subject"
+      ? subjectTitleAttachmentTransform[data.titlePosition]
+      : titleAttachmentTransform[data.titlePosition],
     zIndex: 1,
   } as CSSProperties;
   const titleBarStyle = {
@@ -294,7 +355,7 @@ export const RegionFrameNode = memo(function RegionFrameNode({
     // wider title while compact groups wrap before the label overwhelms them.
     maxWidth: Math.min(
       titleMaxWidth[level],
-      Math.max(156, frameWidth * titleWidthRatio[data.shape]),
+      Math.max(156, frameWidth * titleWidthRatio[shape]),
     ),
     overflow: "visible",
   } as CSSProperties;
@@ -316,7 +377,10 @@ export const RegionFrameNode = memo(function RegionFrameNode({
     event.stopPropagation();
     const additive = event.ctrlKey || event.metaKey || event.shiftKey;
     const removeFromSelectionOnClick = additive && selected;
-    if (!removeFromSelectionOnClick) {
+    // Pressing an object that already belongs to a selection begins a batch
+    // drag without collapsing its peers. Modifier-click still toggles only on
+    // release so a modifier-drag can use the complete selection.
+    if (!selected) {
       data.onRequestSelection(id, additive ? "add" : "replace");
     }
     data.onDirectGestureStart(id);
@@ -344,6 +408,8 @@ export const RegionFrameNode = memo(function RegionFrameNode({
         drag.startClientY,
         event.clientX,
         event.clientY,
+        event.shiftKey,
+        event.altKey,
       );
     }
     event.preventDefault();
@@ -354,6 +420,8 @@ export const RegionFrameNode = memo(function RegionFrameNode({
       delta.y,
       event.clientX,
       event.clientY,
+      event.shiftKey,
+      event.altKey,
     );
   };
 
@@ -374,6 +442,8 @@ export const RegionFrameNode = memo(function RegionFrameNode({
         delta.y,
         event.clientX,
         event.clientY,
+        event.shiftKey,
+        event.altKey,
       );
     } else if (drag.removeFromSelectionOnClick) {
       data.onRequestSelection(id, "remove");
@@ -400,7 +470,7 @@ export const RegionFrameNode = memo(function RegionFrameNode({
     event.stopPropagation();
     const additive = event.ctrlKey || event.metaKey || event.shiftKey;
     const removeFromSelectionOnClick = additive && selected;
-    if (!removeFromSelectionOnClick) {
+    if (!selected) {
       data.onRequestSelection(id, additive ? "add" : "replace");
     }
     const point = pointWithinFrame(event);
@@ -553,34 +623,18 @@ export const RegionFrameNode = memo(function RegionFrameNode({
 
   return (
     <section
-      className={`region-frame region-frame--${data.variant} region-frame--level-${level} region-frame--${data.shape} region-frame--${data.borderStyle} region-frame--weight-${borderWeight}${selected ? " is-selected" : ""}`}
+      className={`region-frame region-frame--${data.variant} region-frame--level-${level} region-frame--${shape} region-frame--${data.borderStyle} region-frame--weight-${borderWeight}${level === "subject" ? ` region-frame--subject-${subjectFrameStyle}` : ""}${selected ? " is-selected" : ""}`}
       style={style}
       aria-label={`${data.title} ${level}`}
       data-testid={`group-${data.regionId}`}
-      data-group-shape={data.shape}
+      data-group-shape={shape}
       data-group-level={level}
       data-fill-opacity={fillOpacity}
       data-border-weight={borderWeight}
       data-region-variant={data.variant}
+      data-subject-frame-style={level === "subject" ? subjectFrameStyle : undefined}
     >
       <svg className="region-frame__surface" viewBox={glyph.viewBox} preserveAspectRatio="none" aria-hidden="true">
-        {level === "subject" && (
-          <defs>
-            <pattern
-              id={subjectTexturePatternId}
-              patternUnits="userSpaceOnUse"
-              width={subjectTexturePatternWidth}
-              height={subjectTexturePatternHeight}
-              viewBox="0 0 44 44"
-              preserveAspectRatio="none"
-            >
-              <path
-                className="region-frame__subject-texture-mark"
-                d={SUBJECT_TEXTURE_PATH}
-              />
-            </pattern>
-          </defs>
-        )}
         {selected && (
           <>
             <path className="region-frame__selection-halo" d={glyph.framePath} vectorEffect="non-scaling-stroke" />
@@ -590,29 +644,20 @@ export const RegionFrameNode = memo(function RegionFrameNode({
         {level === "subject" && (
           <path className="region-frame__subject-field" d={glyph.framePath} vectorEffect="non-scaling-stroke" />
         )}
-        {level === "subject" && (
-          <path
-            className="region-frame__subject-texture"
-            d={glyph.framePath}
-            fill={`url(#${subjectTexturePatternId})`}
-          />
-        )}
         {level === "subgroup" && (
           <path className="region-frame__subgroup-field" d={glyph.framePath} vectorEffect="non-scaling-stroke" />
         )}
         <path className="region-frame__shape" d={glyph.framePath} vectorEffect="non-scaling-stroke" />
-        {level === "subject" && (
-          <path className="region-frame__subject-contour" d={glyph.framePath} vectorEffect="non-scaling-stroke" />
-        )}
         <path
           className="region-frame__hit-target nodrag nopan"
           data-canvas-gesture="group-resize"
           d={glyph.framePath}
           fill="none"
           stroke="rgba(0,0,0,0.001)"
-          strokeWidth={BORDER_HIT_WIDTH}
+          strokeWidth={borderHitWidth}
           vectorEffect="non-scaling-stroke"
           pointerEvents="stroke"
+          data-screen-hit-width={borderScreenHitWidth}
           aria-label={`Resize ${data.title} ${level}`}
           onPointerDown={startBorderResize}
           onPointerMove={moveBorderResize}
@@ -646,7 +691,7 @@ export const RegionFrameNode = memo(function RegionFrameNode({
           data-title-position={data.titlePosition}
           data-title-anchor={`${titleAnchor.x},${titleAnchor.y}`}
           data-title-contour-angle={titleAngle}
-          data-title-shape={data.shape}
+          data-title-shape={shape}
           data-title-treatment={level}
           title={`Drag to move ${level} · right-click to edit`}
           onPointerDown={startTitleDrag}
@@ -694,7 +739,15 @@ export const RegionFrameNode = memo(function RegionFrameNode({
               vectorEffect="non-scaling-stroke"
             />
           </svg>
-          {level !== "subject" && (
+          {level === "subject" ? (
+            <span
+              className="region-frame__subject-icon"
+              data-subject-icon={subjectFrameStyle}
+              aria-hidden="true"
+            >
+              <SubjectIcon strokeWidth={2.1} />
+            </span>
+          ) : (
             <span className="region-frame__title-mark" aria-hidden="true">
               <span className="region-frame__title-mark-core" />
             </span>
@@ -707,7 +760,7 @@ export const RegionFrameNode = memo(function RegionFrameNode({
               overflow: "visible",
               textOverflow: "clip",
               whiteSpace: "normal",
-              fontSize: `${data.titleFontSize}px`,
+              fontSize: `${level === "subject" ? Math.max(data.titleFontSize, 42) : data.titleFontSize}px`,
             }}
           >
             {data.title}
@@ -723,7 +776,7 @@ export const RegionFrameNode = memo(function RegionFrameNode({
           type="source"
           isConnectable={isConnectable}
           position={port.position}
-          style={framePortStyle(data.shape, port.id, 100, 100)}
+          style={framePortStyle(shape, port.id, 100, 100)}
           data-port-side={port.id}
           data-canvas-gesture="connect"
           aria-hidden="true"
@@ -750,7 +803,7 @@ export const RegionFrameNode = memo(function RegionFrameNode({
               type="source"
               isConnectable={isConnectable}
               position={port.position}
-              style={framePortStyle(data.shape, port.id, 100, 100)}
+              style={framePortStyle(shape, port.id, 100, 100)}
               data-port-side={port.id}
               data-canvas-gesture="connect"
               title={`Draw connection from ${data.title}`}

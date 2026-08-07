@@ -82,7 +82,7 @@ export const InspectorPanel = memo(function InspectorPanel({
     return (
       <aside className="inspector-panel inspector-panel--empty">
         {onCollapse && (
-          <button className="panel-hide panel-hide--right" type="button" aria-label="Hide note sidebar" onClick={onCollapse}>
+          <button className="panel-hide panel-hide--right" type="button" aria-label="Close note sidebar" title="Close note sidebar" onClick={onCollapse}>
             <PanelRightClose size={14} aria-hidden="true" />
           </button>
         )}
@@ -100,7 +100,7 @@ export const InspectorPanel = memo(function InspectorPanel({
         <header className={`inspector-header${isInformalNote ? " inspector-header--titleless" : ""}`}>
           {!isInformalNote && <h2 title={contentPath}>{displayTitle}</h2>}
           {onCollapse && (
-            <button className="panel-hide panel-hide--right" type="button" aria-label="Hide note sidebar" onClick={onCollapse}>
+            <button className="panel-hide panel-hide--right" type="button" aria-label="Close note sidebar" title="Close note sidebar" onClick={onCollapse}>
               <PanelRightClose size={14} aria-hidden="true" />
             </button>
           )}

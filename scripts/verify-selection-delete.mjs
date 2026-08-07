@@ -606,7 +606,7 @@ try {
   await page.getByTestId(`landmark-${landmarkIds[0]}`).click();
   await page.getByTestId(`landmark-${landmarkIds[1]}`).click({ modifiers: ["Control"] });
   await waitForSelectedIds(page, landmarkIds.slice(0, 2));
-  await page.getByRole("button", { name: "Hide note sidebar", exact: true }).click();
+  await page.getByRole("button", { name: "Close note sidebar", exact: true }).click();
   await page.getByRole("button", { name: "Hide file sidebar", exact: true }).click();
   await waitForSelectedIds(page, landmarkIds.slice(0, 2));
   await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -646,7 +646,6 @@ try {
   // caret-level edit wholly inside the disposable browser context.
   await searchInput.fill("");
   await searchInput.press("Escape");
-  await page.getByRole("button", { name: "Show note sidebar", exact: true }).click();
   await page.getByTestId(`landmark-${landmarkIds[0]}`).click();
   const formula = page.locator("#note-sidebar .editable-math--inline[role='button']").first();
   await formula.waitFor({ timeout: 15_000 });
@@ -697,9 +696,6 @@ try {
   assert(noteBounds, "The created Note has no clickable frame geometry.");
   await notePage.mouse.click(noteBounds.x + 4, noteBounds.y + 4);
   const noteSidebar = notePage.locator("#note-sidebar");
-  if (await noteSidebar.evaluate((element) => element.hidden)) {
-    await notePage.getByRole("button", { name: "Show note sidebar", exact: true }).click();
-  }
   await notePage.waitForFunction(() => {
     const sidebar = document.querySelector("#note-sidebar");
     return sidebar !== null && !sidebar.hidden;

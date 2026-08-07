@@ -38,6 +38,14 @@ import {
   type Viewport,
   useNodesState,
 } from "@xyflow/react";
+import type {
+  CanvasConnectionSnapHint,
+  CanvasMovementSnapState,
+  CanvasMovingSelection,
+  CanvasSnapGuide,
+  CanvasSnapPoint,
+  CanvasSnapTarget,
+} from "../domain/canvasMovementSnap";
 import {
   defaultLandmarkShape,
   objectShapeContainsPoint,
@@ -48,6 +56,10 @@ import {
 } from "../domain/mapAppearance";
 import { repositoryPath } from "../domain/contentPaths";
 import { isTextEditingTarget } from "../domain/keyboardTargets";
+import {
+  DEFAULT_SUBJECT_FRAME_STYLE,
+  type SubjectFrameStyle,
+} from "../domain/subjectFrameStyle";
 import {
   type NoteFileDragItem,
   type NoteFileDragPayload,
@@ -67,6 +79,7 @@ import {
   DEFAULT_GROUP_TITLE_FONT_SIZE,
   defaultGroupBorderWeight,
   defaultGroupFillOpacity,
+  resolveGroupShape,
   type ConnectionCustomization,
   type ConnectionDirection,
   type ConnectionLineStyle,
@@ -83,7 +96,7 @@ import {
   type MapCustomizationsUpdater,
 } from "../state/mapCustomizationStore";
 import { LandmarkNode, type LandmarkGraphNode } from "./LandmarkNode";
-import type { DeferredAtlasMenuContentProps } from "./DeferredAtlasMenuContent";
+import type { AtlasContextPanel, AtlasMenuState } from "./DeferredAtlasMenus";
 import { RegionFrameNode, type RegionGraphNode } from "./RegionFrameNode";
 import { useNoteFileDropTarget } from "./noteFileDragInteractions";
 import {
@@ -94,36 +107,29 @@ import {
 } from "../services/desktopCanvasDrag";
 import "./CanvasMotionQuality.css";
 
-const LazyDeferredAtlasMenuContent = lazy(() => import("./DeferredAtlasMenuContent"));
-// Contextual palettes are absent from the steady-state canvas. Keeping their
-// focus/positioning and form machinery out of the graph chunk makes the map
-// cheaper to open while preserving instant direct manipulation once requested.
-const MapContextMenu = lazy(() => import("./MapContextMenu").then((module) => ({
-  default: module.MapContextMenu,
+const LazyDeferredAtlasMenus = lazy(() => import("./DeferredAtlasMenus"));
+const LazyCanvasAlignmentGuides = lazy(() => import("./CanvasAlignmentGuides").then((module) => ({
+  default: module.CanvasAlignmentGuides,
 })));
 
-function DeferredContextMenu({
-  x,
-  y,
-  label,
-  onClose,
-  content,
-}: {
-  x: number;
-  y: number;
-  label: string;
-  onClose: () => void;
-  content: DeferredAtlasMenuContentProps;
-}) {
-  return (
-    <MapContextMenu x={x} y={y} label={label} onClose={onClose}>
-      <Suspense fallback={<div className={content.kind === "canvas" ? "map-tool-panel map-tool-loading" : "map-tool-loading"} />}>
-        <LazyDeferredAtlasMenuContent {...content} />
-      </Suspense>
-    </MapContextMenu>
-  );
-}
+type MovementSnapResolver = typeof import("../domain/canvasMovementSnap").resolveCanvasMovementSnap;
+type MovementGestureBuilder = typeof import("../domain/canvasMovementSnap").buildCanvasMovementGesture;
+let movementSnapResolver: MovementSnapResolver | undefined;
+let movementGestureBuilder: MovementGestureBuilder | undefined;
+let movementSnapResolverPromise: Promise<MovementSnapResolver> | undefined;
 
+// Smart movement is not needed to paint or navigate the atlas. Warm it as the
+// pointer approaches the canvas so opening a large map stays lean while the
+// first intentional drag still gets the full magnetic resolver.
+export function prepareCanvasMovementAssist() {
+  if (movementSnapResolver) return Promise.resolve(movementSnapResolver);
+  movementSnapResolverPromise ??= import("../domain/canvasMovementSnap").then((module) => {
+    movementSnapResolver = module.resolveCanvasMovementSnap;
+    movementGestureBuilder = module.buildCanvasMovementGesture;
+    return movementSnapResolver;
+  });
+  return movementSnapResolverPromise;
+}
 export interface NewLandmarkRequest {
   title: string;
   kind: EditableLandmarkKind;
@@ -185,6 +191,8 @@ interface AtlasGraphProps {
   placementOverrides: readonly Placement[];
   customizations: MapCustomizations;
   onSelectLandmark: (landmark: Landmark) => void;
+  /** Clears the shell-owned note/file selection when the canvas no longer owns it. */
+  onClearActiveSelection?: () => void;
   onPlacementChange: (placement: Placement) => void;
   onPlacementChanges: (placements: readonly Placement[]) => void;
   /** Persists position and size as one history/desktop transaction. */
@@ -261,6 +269,7 @@ interface GroupDescriptor {
   fillOpacity: number;
   titlePosition: GroupTitlePosition;
   titleFontSize: number;
+  subjectFrameStyle?: SubjectFrameStyle;
 }
 
 interface GroupDragState {
@@ -288,15 +297,37 @@ interface GroupDragState {
 }
 
 interface GroupDragPreview {
-  drag: GroupDragState;
+  drag?: GroupDragState;
+  selection?: CanvasSelectionMoveState;
   deltaX: number;
   deltaY: number;
   moveRoot: boolean;
 }
 
+interface CanvasSelectionMoveGroup {
+  regionId: string;
+  x: number;
+  y: number;
+  persistPosition: boolean;
+}
+
+interface CanvasSelectionMoveState {
+  primaryId: string;
+  primaryStartX: number;
+  primaryStartY: number;
+  positions: Map<string, { x: number; y: number }>;
+  /** Visible roots whose union is the drafting/alignment rectangle. */
+  snapNodeIds: Set<string>;
+  landmarkIds: Set<string>;
+  groups: Map<string, CanvasSelectionMoveGroup>;
+}
+
 interface LandmarkDragState {
   primaryId: string;
   positions: Map<string, { x: number; y: number }>;
+  selection?: CanvasSelectionMoveState;
+  pointerStart?: CanvasSnapPoint;
+  lastDelta: CanvasSnapPoint;
 }
 
 interface DesktopDragRuntime {
@@ -304,7 +335,26 @@ interface DesktopDragRuntime {
   startX: number;
   startY: number;
   group?: GroupDragState;
+  selection?: CanvasSelectionMoveState;
   ended: boolean;
+}
+
+interface CanvasMovementModifiers {
+  shiftKey?: boolean;
+  altKey?: boolean;
+  /** Desktop receivers use the axis chosen by the gesture owner. */
+  axisLock?: "x" | "y";
+}
+
+interface CanvasMovementAssistRuntime {
+  primaryId: string;
+  moving: CanvasMovingSelection;
+  stationary: readonly CanvasSnapTarget[];
+  connections: readonly CanvasConnectionSnapHint[];
+  contextKey: string;
+  snapState?: CanvasMovementSnapState;
+  axisLock?: "x" | "y";
+  lastDelta: CanvasSnapPoint;
 }
 
 interface CachedEdge {
@@ -325,12 +375,6 @@ interface CachedCustomGroupMembership {
   landmarks: readonly Landmark[];
   memberIds: string[];
 }
-
-type ContextMenuState =
-  | { kind: "canvas"; x: number; y: number; flowX: number; flowY: number; subjectId: SubjectId }
-  | { kind: "landmark"; x: number; y: number; landmarkId: string }
-  | { kind: "group"; x: number; y: number; regionId: string }
-  | { kind: "connection"; x: number; y: number; connectionId: string };
 
 interface EditableConnectionState {
   id: string;
@@ -436,19 +480,6 @@ function customGroupGeometrySignature(group: {
   shape: GroupShape;
 }) {
   return `${group.x}\u001f${group.y}\u001f${group.width}\u001f${group.height}\u001f${group.shape}`;
-}
-
-type ContextPanel = "kind" | "level" | "shape" | "content" | "size" | "anchor" | "frame" | "direction" | "line" | "path" | "color";
-
-function groupLevelLabel(level: GroupLevel) {
-  if (level === "subject") return "Subject";
-  return level === "subgroup" ? "Subgroup" : "Group";
-}
-
-function landmarkKindLabel(kind: EditableLandmarkKind) {
-  return kind === "concept"
-    ? "Note"
-    : `${kind.charAt(0).toUpperCase()}${kind.slice(1)}`;
 }
 
 const defaultLineByRelation: Record<RelationKind, ConnectionLineStyle> = {
@@ -930,6 +961,7 @@ export function AtlasGraph({
   placementOverrides,
   customizations,
   onSelectLandmark,
+  onClearActiveSelection,
   onPlacementChange,
   onPlacementChanges,
   onLandmarkResize,
@@ -945,6 +977,13 @@ export function AtlasGraph({
   const [selectedCanvasNodeIds, setSelectedCanvasNodeIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const externalSelectionPath = repositoryPath(selectedContentPath)?.toLocaleLowerCase();
+  const externalSelectionKey = `${selectedLandmarkId ?? ""}\u0000${externalSelectionPath ?? ""}`;
+  const externalSelectionKeyRef = useRef(externalSelectionKey);
+  const preserveMenuForExternalSelectionKeyRef = useRef<string | undefined>(undefined);
+  const explicitlyClearedExternalSelectionKeyRef = useRef<string | undefined>(undefined);
+  const previousSelectedCanvasNodeIdsRef = useRef<ReadonlySet<string>>(selectedCanvasNodeIds);
+  const activeCanvasLandmarkRef = useRef<string | undefined>(undefined);
   const [selectedConnectionIds, setSelectedConnectionIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -956,17 +995,18 @@ export function AtlasGraph({
   const [interactionCancelToken, setInteractionCancelToken] = useState(0);
   const [hoveredNodeId, setHoveredNodeId] = useState<string>();
   const [connectionSourceNodeId, setConnectionSourceNodeId] = useState<string>();
-  const [menu, setMenu] = useState<ContextMenuState>();
+  const [menu, setMenu] = useState<AtlasMenuState>();
   const [landmarkCreationKind, setLandmarkCreationKind] = useState<EditableLandmarkKind>();
   const [informalNotePending, setInformalNotePending] = useState(false);
   const [informalNoteError, setInformalNoteError] = useState<string>();
   const [groupCreationLevel, setGroupCreationLevel] = useState<GroupLevel>();
-  const [menuPanel, setMenuPanel] = useState<ContextPanel>("kind");
+  const [menuPanel, setMenuPanel] = useState<AtlasContextPanel>("kind");
   const [copiedColor, setCopiedColor] = useState<string>();
   const [groupSurfacePreview, setGroupSurfacePreview] = useState<{
     regionId: string;
     fillOpacity: number;
   }>();
+  const [movementGuides, setMovementGuides] = useState<readonly CanvasSnapGuide[]>([]);
   const landmarkCreationAttemptRef = useRef(0);
   const flowRef = useRef<ReactFlowInstance<AtlasGraphNode, Edge> | undefined>(undefined);
   const initialViewSetRef = useRef(false);
@@ -981,9 +1021,13 @@ export function AtlasGraph({
   // of treating a drag-state transition as a new remote camera.
   const lastExternalViewportRef = useRef<Viewport | undefined>(externalViewport);
   const groupDragRef = useRef<GroupDragState | undefined>(undefined);
+  const selectionMoveRef = useRef<CanvasSelectionMoveState | undefined>(undefined);
   const groupDragPreviewRef = useRef<GroupDragPreview | undefined>(undefined);
   const groupDragFrameRef = useRef<number | undefined>(undefined);
   const activeNodeDragRef = useRef<LandmarkDragState | undefined>(undefined);
+  const movementAssistRef = useRef<CanvasMovementAssistRuntime | undefined>(undefined);
+  const movementGuideSignatureRef = useRef("");
+  const movementGestureSequenceRef = useRef(0);
   const pendingLandmarkPointerRef = useRef<{
     nodeId: string;
     pointerId: number;
@@ -1020,6 +1064,8 @@ export function AtlasGraph({
       startClientY: number,
       clientX: number,
       clientY: number,
+      shiftKey?: boolean,
+      altKey?: boolean,
     ) => void;
     move: (
       regionId: string,
@@ -1027,6 +1073,8 @@ export function AtlasGraph({
       deltaY: number,
       clientX: number,
       clientY: number,
+      shiftKey?: boolean,
+      altKey?: boolean,
     ) => void;
     end: (
       regionId: string,
@@ -1034,9 +1082,18 @@ export function AtlasGraph({
       deltaY: number,
       clientX: number,
       clientY: number,
+      shiftKey?: boolean,
+      altKey?: boolean,
     ) => void;
     cancel: (regionId: string) => void;
   } | undefined>(undefined);
+
+  // Load the pure drafting resolver just after the first paint. Pointer-over
+  // remains a second prewarm path, but correctness no longer depends on how
+  // quickly the first drag begins after entering the canvas.
+  useEffect(() => {
+    void prepareCanvasMovementAssist();
+  }, []);
 
   const clearConnectionSelection = useCallback(() => {
     setSelectedConnectionIds((current) => current.size ? new Set() : current);
@@ -1045,6 +1102,18 @@ export function AtlasGraph({
   const clearCanvasNodeSelection = useCallback(() => {
     setSelectedCanvasNodeIds((current) => current.size ? new Set() : current);
   }, []);
+
+  const clearActiveShellSelection = useCallback((preserveMenu = false) => {
+    // Prevent the selection-transition observer below from emitting a second
+    // clear after an explicit pane/group/edge action.
+    const activeExternalSelectionKey = externalSelectionKeyRef.current;
+    if (activeExternalSelectionKey !== "\u0000") {
+      explicitlyClearedExternalSelectionKeyRef.current = activeExternalSelectionKey;
+    }
+    if (preserveMenu) preserveMenuForExternalSelectionKeyRef.current = "\u0000";
+    activeCanvasLandmarkRef.current = undefined;
+    onClearActiveSelection?.();
+  }, [onClearActiveSelection]);
 
   const requestCanvasNodeSelection = useCallback((
     nodeId: string,
@@ -1135,12 +1204,20 @@ export function AtlasGraph({
     [customLandmarkById, visibleGroupLandmarks],
   );
   const allLandmarkById = useMemo(() => new Map(visibleGroupLandmarks.map((landmark) => [landmark.id, landmark])), [visibleGroupLandmarks]);
-  const externalSelectionKey = `${selectedLandmarkId ?? ""}\u0000${repositoryPath(selectedContentPath) ?? ""}`;
-  const externalSelectionKeyRef = useRef(externalSelectionKey);
   useEffect(() => {
     if (externalSelectionKeyRef.current === externalSelectionKey) return;
+    const previousExternalSelectionKey = externalSelectionKeyRef.current;
     externalSelectionKeyRef.current = externalSelectionKey;
-    const selectedPath = repositoryPath(selectedContentPath)?.toLocaleLowerCase();
+    const preserveMenu = preserveMenuForExternalSelectionKeyRef.current === externalSelectionKey;
+    preserveMenuForExternalSelectionKeyRef.current = undefined;
+    const preserveCanvasSelection = externalSelectionKey === "\u0000" &&
+      explicitlyClearedExternalSelectionKeyRef.current === previousExternalSelectionKey;
+    explicitlyClearedExternalSelectionKeyRef.current = undefined;
+    if (preserveCanvasSelection) {
+      if (!preserveMenu) setMenu(undefined);
+      return;
+    }
+    const selectedPath = externalSelectionPath;
     const externalStillOwnsCanvasNode = [...selectedCanvasNodeIds].some((id) => {
       const landmark = allLandmarkById.get(id);
       if (!landmark) return false;
@@ -1151,8 +1228,36 @@ export function AtlasGraph({
     if (externalStillOwnsCanvasNode) return;
     clearCanvasNodeSelection();
     clearConnectionSelection();
-    setMenu(undefined);
-  }, [allLandmarkById, clearCanvasNodeSelection, clearConnectionSelection, externalSelectionKey, selectedCanvasNodeIds, selectedContentPath, selectedLandmarkId]);
+    if (!preserveMenu) setMenu(undefined);
+  }, [allLandmarkById, clearCanvasNodeSelection, clearConnectionSelection, externalSelectionKey, externalSelectionPath, selectedCanvasNodeIds, selectedLandmarkId]);
+
+  useEffect(() => {
+    const previousSelection = previousSelectedCanvasNodeIdsRef.current;
+    previousSelectedCanvasNodeIdsRef.current = selectedCanvasNodeIds;
+    if (externalSelectionKey === "\u0000") {
+      activeCanvasLandmarkRef.current = undefined;
+      return;
+    }
+    const activeStillSelected = [...selectedCanvasNodeIds].some((id) => {
+      const landmark = allLandmarkById.get(id);
+      if (!landmark) return false;
+      if (selectedLandmarkId) return landmark.id === selectedLandmarkId;
+      return Boolean(externalSelectionPath) &&
+        repositoryPath(landmark.contentPath)?.toLocaleLowerCase() === externalSelectionPath;
+    });
+    const previouslyOwnedKey = activeCanvasLandmarkRef.current;
+    activeCanvasLandmarkRef.current = activeStillSelected ? externalSelectionKey : undefined;
+    const replacedExternalEmphasis = previousSelection.size === 0 &&
+      selectedCanvasNodeIds.size > 0 &&
+      !activeStillSelected;
+    const explicitClearPending = explicitlyClearedExternalSelectionKeyRef.current === externalSelectionKey;
+    if (!explicitClearPending && (
+      (previouslyOwnedKey === externalSelectionKey && !activeStillSelected) ||
+      replacedExternalEmphasis
+    )) {
+      clearActiveShellSelection();
+    }
+  }, [allLandmarkById, clearActiveShellSelection, externalSelectionKey, externalSelectionPath, selectedCanvasNodeIds, selectedLandmarkId]);
   const landmarksBySubject = useMemo(
     () => buildLandmarksBySubject(legacyDerivedGroupLandmarks),
     [legacyDerivedGroupLandmarks],
@@ -1173,12 +1278,16 @@ export function AtlasGraph({
       const subjectId = landmark ? primarySubjectId(landmark) : undefined;
       placements.set(placement.landmarkId, {
         landmarkId: placement.landmarkId,
-        x: snap(placement.x + (subjectId ? zoneDefaults.get(subjectId)?.x ?? 0 : 0)),
-        y: snap(placement.y),
+        // Smart alignment can intentionally land between grid columns (for
+        // example when an odd-grid landmark is centred in an even-grid
+        // group). Preserve authored geometry here; ordinary drags still use
+        // the dot grid as their fallback in the movement resolver.
+        x: placement.x + (subjectId ? zoneDefaults.get(subjectId)?.x ?? 0 : 0),
+        y: placement.y,
       });
     });
     customizations.customLandmarks.forEach((landmark) => {
-      placements.set(landmark.id, { landmarkId: landmark.id, x: snap(landmark.x), y: snap(landmark.y) });
+      placements.set(landmark.id, { landmarkId: landmark.id, x: landmark.x, y: landmark.y });
     });
     const unplacedBySubject = new Map<SubjectId, number>();
     visibleGroupLandmarks.forEach((landmark) => {
@@ -1195,8 +1304,8 @@ export function AtlasGraph({
     });
     placementOverrides.forEach((placement) => placements.set(placement.landmarkId, {
       landmarkId: placement.landmarkId,
-      x: snap(placement.x),
-      y: snap(placement.y),
+      x: placement.x,
+      y: placement.y,
     }));
     return placements;
   }, [allLandmarkById, customizations.customLandmarks, placementOverrides, snapshot.placements, visibleGroupLandmarks, zoneDefaults]);
@@ -1209,7 +1318,8 @@ export function AtlasGraph({
     const next = new Map<string, CachedCustomGroupMembership>();
     const rawMemberships = new Map<string, string[]>();
     customizations.customGroups.forEach((group) => {
-      const geometrySignature = customGroupGeometrySignature(group);
+      const shape = resolveGroupShape(group.level ?? "group", group.shape);
+      const geometrySignature = customGroupGeometrySignature({ ...group, shape });
       const cached = previous.get(group.id);
       if (
         cached?.geometrySignature === geometrySignature &&
@@ -1231,7 +1341,7 @@ export function AtlasGraph({
         const centerX = position.x + dimensions.width / 2;
         const centerY = position.y + dimensions.height / 2;
         return objectShapeContainsPoint(
-          group.shape,
+          shape,
           (centerX - group.x) / group.width,
           (centerY - group.y) / group.height,
         ) ? [landmark.id] : [];
@@ -1301,8 +1411,8 @@ export function AtlasGraph({
           level === "subject" ? undefined : subjectZoneKey(group.subjectId)
         ),
         memberIds,
-        x: snap(group.x),
-        y: snap(group.y),
+        x: group.x,
+        y: group.y,
         width: Math.max(GROUP_MIN_WIDTH, snap(group.width)),
         height: Math.max(GROUP_MIN_HEIGHT, snap(group.height)),
         color: group.color,
@@ -1312,14 +1422,17 @@ export function AtlasGraph({
         fillOpacity: group.fillOpacity ?? defaultGroupFillOpacity(level),
         titlePosition: group.titlePosition ?? "top-left",
         titleFontSize: group.titleFontSize ?? DEFAULT_GROUP_TITLE_FONT_SIZE,
+        subjectFrameStyle: group.subjectFrameStyle,
       };
     });
     const levelOrder: Record<GroupLevel, number> = { subject: 0, group: 1, subgroup: 2 };
-    return [...subjectGroups, ...regionGroups, ...customGroups].map((group) => (
-      groupSurfacePreview?.regionId === group.region.id
-        ? { ...group, fillOpacity: groupSurfacePreview.fillOpacity }
-        : group
-    )).sort((left, right) => {
+    return [...subjectGroups, ...regionGroups, ...customGroups].map((group) => {
+      const shape = resolveGroupShape(group.level, group.shape);
+      const resolvedGroup = shape === group.shape ? group : { ...group, shape };
+      return groupSurfacePreview?.regionId === group.region.id
+        ? { ...resolvedGroup, fillOpacity: groupSurfacePreview.fillOpacity }
+        : resolvedGroup;
+    }).sort((left, right) => {
       const levelDifference = levelOrder[left.level] - levelOrder[right.level];
       if (levelDifference) return levelDifference;
       if (left.level === "subject") return left.x - right.x || left.y - right.y || left.nodeId.localeCompare(right.nodeId);
@@ -1481,11 +1594,12 @@ export function AtlasGraph({
   const requestGroupContextMenu = useCallback((regionId: string, x: number, y: number) => {
     const nodeId = groupByRegionId.get(regionId)?.nodeId;
     if (nodeId && !selectedCanvasNodeIds.has(nodeId)) {
+      clearActiveShellSelection(true);
       setSelectedCanvasNodeIds(new Set([nodeId]));
       clearConnectionSelection();
     }
     setMenu({ kind: "group", regionId, x, y });
-  }, [clearConnectionSelection, groupByRegionId, selectedCanvasNodeIds]);
+  }, [clearActiveShellSelection, clearConnectionSelection, groupByRegionId, selectedCanvasNodeIds]);
 
   const startTitleDrag = useCallback((
     regionId: string,
@@ -1493,12 +1607,16 @@ export function AtlasGraph({
     startClientY: number,
     clientX: number,
     clientY: number,
+    shiftKey?: boolean,
+    altKey?: boolean,
   ) => titleDragHandlersRef.current?.start(
     regionId,
     startClientX,
     startClientY,
     clientX,
     clientY,
+    shiftKey,
+    altKey,
   ), []);
   const moveTitleDrag = useCallback((
     regionId: string,
@@ -1506,14 +1624,18 @@ export function AtlasGraph({
     y: number,
     clientX: number,
     clientY: number,
-  ) => titleDragHandlersRef.current?.move(regionId, x, y, clientX, clientY), []);
+    shiftKey?: boolean,
+    altKey?: boolean,
+  ) => titleDragHandlersRef.current?.move(regionId, x, y, clientX, clientY, shiftKey, altKey), []);
   const endTitleDrag = useCallback((
     regionId: string,
     x: number,
     y: number,
     clientX: number,
     clientY: number,
-  ) => titleDragHandlersRef.current?.end(regionId, x, y, clientX, clientY), []);
+    shiftKey?: boolean,
+    altKey?: boolean,
+  ) => titleDragHandlersRef.current?.end(regionId, x, y, clientX, clientY, shiftKey, altKey), []);
   const cancelTitleDrag = useCallback((regionId: string) => {
     titleDragHandlersRef.current?.cancel(regionId);
   }, []);
@@ -1561,6 +1683,7 @@ export function AtlasGraph({
         fillOpacity: group.fillOpacity,
         titlePosition: group.titlePosition,
         titleFontSize: group.titleFontSize,
+        subjectFrameStyle: group.subjectFrameStyle,
         cancelToken: interactionCancelToken,
         onRequestSelection: requestCanvasNodeSelection,
         onDirectGestureStart: beginDirectGesture,
@@ -1697,6 +1820,181 @@ export function AtlasGraph({
       return next;
     });
   }, [nodeBlueprints, onNodesChange, onPlacementChanges]);
+
+  const movementParentByNodeId = useMemo(() => {
+    const groupNodeByRegionId = new Map(groups.map(({ nodeId, region }) => [region.id, nodeId]));
+    const parents = new Map<string, string | null>();
+    groups.forEach((group) => {
+      parents.set(
+        group.nodeId,
+        group.parentId
+          ? groupNodeByRegionId.get(group.parentId) ?? group.parentId
+          : null,
+      );
+    });
+    baseLandmarkNodes.forEach((node) => {
+      parents.set(node.id, smallestGroupByLandmark.get(node.id)?.nodeId ?? null);
+    });
+    return parents;
+  }, [baseLandmarkNodes, groups, smallestGroupByLandmark]);
+
+  const movementTargets = useMemo<readonly CanvasSnapTarget[]>(() => (
+    nodeBlueprints.map((node) => ({
+      id: node.id,
+      rect: {
+        x: node.position.x,
+        y: node.position.y,
+        width: node.width ?? (isRegionNode(node) ? GROUP_MIN_WIDTH : LANDMARK_WIDTH),
+        height: node.height ?? (isRegionNode(node) ? GROUP_MIN_HEIGHT : LANDMARK_HEIGHT),
+      },
+      kind: isRegionNode(node) ? node.data.level ?? "group" : "landmark",
+      role: isRegionNode(node) ? "container" as const : "item" as const,
+      parentId: movementParentByNodeId.get(node.id) ?? null,
+      shape: node.data.shape as GroupShape,
+    }))
+  ), [movementParentByNodeId, nodeBlueprints]);
+
+  const publishMovementGuides = useCallback((guides: readonly CanvasSnapGuide[]) => {
+    const signature = JSON.stringify(guides);
+    if (signature === movementGuideSignatureRef.current) return;
+    movementGuideSignatureRef.current = signature;
+    setMovementGuides(guides);
+  }, []);
+
+  const clearMovementAssist = useCallback(() => {
+    movementGestureSequenceRef.current += 1;
+    movementAssistRef.current = undefined;
+    publishMovementGuides([]);
+  }, [publishMovementGuides]);
+
+  const beginMovementAssist = useCallback((
+    primaryId: string,
+    positions: ReadonlyMap<string, CanvasSnapPoint>,
+    snapNodeIds: ReadonlySet<string>,
+  ) => {
+    const movementReady = prepareCanvasMovementAssist();
+    const sequence = ++movementGestureSequenceRef.current;
+    const input = {
+      targets: movementTargets,
+      liveNodes: flowRef.current?.getNodes?.() ?? [],
+      positions,
+      snapNodeIds,
+      // These are the exact resolved handles currently drawn by React Flow.
+      connections: [...edgeListRef.current],
+    };
+    const installGesture = () => {
+      const gesture = movementGestureBuilder?.(input);
+      if (!gesture || movementGestureSequenceRef.current !== sequence) return false;
+      movementAssistRef.current = {
+        primaryId,
+        ...gesture,
+        contextKey: `${primaryId}:${sequence}`,
+        lastDelta: { x: 0, y: 0 },
+      };
+      return true;
+    };
+    if (!installGesture()) void movementReady.then(installGesture);
+    publishMovementGuides([]);
+  }, [movementTargets, publishMovementGuides]);
+
+  const resolveMovementAssist = useCallback((
+    primaryId: string,
+    rawDelta: CanvasSnapPoint,
+    modifiers: CanvasMovementModifiers = {},
+  ) => {
+    const assist = movementAssistRef.current;
+    if (!assist || assist.primaryId !== primaryId) return rawDelta;
+    const viewportZoom = flowRef.current?.getViewport().zoom ?? 1;
+    // At extreme overview zoom a literal eight-screen-pixel radius covers a
+    // huge part of the world. Keep it helpful without turning the map sticky.
+    const effectiveZoom = Math.max(
+      .28,
+      viewportZoom * (
+        Number.isFinite(viewportScaleFactor) && viewportScaleFactor > 0
+          ? viewportScaleFactor
+          : 1
+      ),
+    );
+
+    if (modifiers.axisLock) {
+      assist.axisLock = modifiers.axisLock;
+    } else if (modifiers.shiftKey) {
+      if (
+        !assist.axisLock &&
+        Math.max(Math.abs(rawDelta.x), Math.abs(rawDelta.y)) * effectiveZoom >= 5
+      ) {
+        assist.axisLock = Math.abs(rawDelta.x) >= Math.abs(rawDelta.y) ? "x" : "y";
+      }
+    } else assist.axisLock = undefined;
+
+    const constrained = {
+      x: assist.axisLock === "y" ? 0 : rawDelta.x,
+      y: assist.axisLock === "x" ? 0 : rawDelta.y,
+    };
+    const resolver = movementSnapResolver;
+    const fallbackDelta = {
+      x: assist.axisLock === "y"
+        ? 0
+        : Math.round((assist.moving.rect.x + constrained.x) / GRID) * GRID - assist.moving.rect.x,
+      y: assist.axisLock === "x"
+        ? 0
+        : Math.round((assist.moving.rect.y + constrained.y) / GRID) * GRID - assist.moving.rect.y,
+    };
+    const result = resolver
+      ? resolver({
+          moving: assist.moving,
+          stationary: assist.stationary,
+          connections: assist.connections,
+          zoom: effectiveZoom,
+          rawDelta: constrained,
+          gridSize: GRID,
+          modifiers: { altKey: modifiers.altKey, axisLock: assist.axisLock },
+          previous: assist.snapState,
+          contextKey: assist.contextKey,
+        })
+      : {
+          // A direct click-drag can beat the tiny deferred module on a cold
+          // cache. Keep that first frame pointer-synchronous and grid-correct;
+          // the next sample upgrades to magnets as soon as the import lands.
+          delta: fallbackDelta,
+          rect: {
+            ...assist.moving.rect,
+            x: assist.moving.rect.x + fallbackDelta.x,
+            y: assist.moving.rect.y + fallbackDelta.y,
+          },
+          guides: [] as readonly CanvasSnapGuide[],
+          state: { contextKey: assist.contextKey },
+        };
+    assist.snapState = result.state;
+    assist.lastDelta = result.delta;
+
+    const guides = [...result.guides];
+    if (assist.axisLock) {
+      const horizontal = assist.axisLock === "x";
+      const reach = 72 / effectiveZoom;
+      guides.push({
+        id: `axis-lock:${assist.axisLock}`,
+        kind: "alignment",
+        axis: horizontal ? "y" : "x",
+        lines: horizontal
+          ? [{
+              x1: result.rect.x - reach,
+              y1: result.rect.y + result.rect.height / 2,
+              x2: result.rect.x + result.rect.width + reach,
+              y2: result.rect.y + result.rect.height / 2,
+            }]
+          : [{
+              x1: result.rect.x + result.rect.width / 2,
+              y1: result.rect.y - reach,
+              x2: result.rect.x + result.rect.width / 2,
+              y2: result.rect.y + result.rect.height + reach,
+            }],
+        targetIds: ["axis-lock"],
+      });
+    }
+    publishMovementGuides(guides);
+    return result.delta;
+  }, [publishMovementGuides, viewportScaleFactor]);
   useEffect(() => {
     // Manual group and cross-window previews live outside React Flow's native
     // `dragging` flag. Preserve the whole active gesture closure when an
@@ -1709,8 +2007,19 @@ export function AtlasGraph({
       groupDrag.members.forEach(({ landmarkId }) => preserveGeometryIds.add(landmarkId));
       groupDrag.nestedGroups.forEach(({ nodeId }) => preserveGeometryIds.add(nodeId));
     }
+    selectionMoveRef.current?.positions.forEach((_position, id) => {
+      preserveGeometryIds.add(id);
+    });
+    activeNodeDragRef.current?.positions.forEach((_position, id) => {
+      preserveGeometryIds.add(id);
+    });
     const desktopDrag = desktopDragRef.current;
-    if (desktopDrag && !desktopDrag.ended) preserveGeometryIds.add(desktopDrag.event.nodeId);
+    if (desktopDrag && !desktopDrag.ended) {
+      preserveGeometryIds.add(desktopDrag.event.nodeId);
+      desktopDrag.selection?.positions.forEach((_position, id) => {
+        preserveGeometryIds.add(id);
+      });
+    }
     setNodes((currentNodes) => reconcileRuntimeNodes(
       currentNodes,
       nodeBlueprints,
@@ -1820,6 +2129,16 @@ export function AtlasGraph({
       groupDragRef.current = undefined;
       setIsNodeDragging(false);
     }
+    const selectionMove = selectionMoveRef.current;
+    if (selectionMove && !liveNodeIds.has(selectionMove.primaryId)) {
+      if (groupDragFrameRef.current !== undefined) {
+        cancelAnimationFrame(groupDragFrameRef.current);
+        groupDragFrameRef.current = undefined;
+      }
+      groupDragPreviewRef.current = undefined;
+      selectionMoveRef.current = undefined;
+      setIsNodeDragging(false);
+    }
     const desktopDrag = desktopDragRef.current;
     if (desktopDrag && !liveNodeIds.has(desktopDrag.event.nodeId)) {
       desktopDrag.ended = true;
@@ -1827,7 +2146,11 @@ export function AtlasGraph({
       desktopDragRef.current = undefined;
       setIsNodeDragging(false);
     }
-  }, [baseEdges, groupByRegionId, nodeBlueprints]);
+    const movementAssist = movementAssistRef.current;
+    if (movementAssist && !liveNodeIds.has(movementAssist.primaryId)) {
+      clearMovementAssist();
+    }
+  }, [baseEdges, clearMovementAssist, groupByRegionId, nodeBlueprints]);
 
   const searchEdges = useMemo(() => {
     if (!searchMatchIds) {
@@ -2048,8 +2371,11 @@ export function AtlasGraph({
     if (!additive) {
       requestCanvasNodeSelection(node.id, "replace");
     } else setMenu(undefined);
-    if (isLandmarkNode(node) && !togglingOff) onSelectLandmark(node.data.landmark);
-  }, [onSelectLandmark, requestCanvasNodeSelection, selectedCanvasNodeIds]);
+    if (isLandmarkNode(node)) {
+      if (!togglingOff) onSelectLandmark(node.data.landmark);
+      else if (node.data.landmark.id === selectedLandmarkId) clearActiveShellSelection();
+    } else if (!additive) clearActiveShellSelection();
+  }, [clearActiveShellSelection, onSelectLandmark, requestCanvasNodeSelection, selectedCanvasNodeIds, selectedLandmarkId]);
 
   const handleNodeMouseEnter = useCallback<NodeMouseHandler<AtlasGraphNode>>((_event, node) => {
     setHoveredNodeId(node.id);
@@ -2061,7 +2387,8 @@ export function AtlasGraph({
 
   const handleNodeContextMenu = useCallback<NodeMouseHandler<AtlasGraphNode>>((event, node) => {
     event.preventDefault();
-    if (!selectedCanvasNodeIds.has(node.id)) {
+    const replacingSelection = !selectedCanvasNodeIds.has(node.id);
+    if (replacingSelection) {
       setSelectedCanvasNodeIds(new Set([node.id]));
       clearConnectionSelection();
     }
@@ -2069,13 +2396,12 @@ export function AtlasGraph({
       onSelectLandmark(node.data.landmark);
       setMenu({ kind: "landmark", landmarkId: node.id, x: event.clientX, y: event.clientY });
     } else if (isRegionNode(node)) {
+      if (replacingSelection) clearActiveShellSelection(true);
       setMenu({ kind: "group", regionId: node.data.regionId, x: event.clientX, y: event.clientY });
     }
-  }, [clearConnectionSelection, onSelectLandmark, selectedCanvasNodeIds]);
+  }, [clearActiveShellSelection, clearConnectionSelection, onSelectLandmark, selectedCanvasNodeIds]);
 
-  const captureGroupDrag = useCallback((group: GroupDescriptor) => {
-    setMenu(undefined);
-    clearConnectionSelection();
+  const buildGroupDrag = useCallback((group: GroupDescriptor) => {
     const groupsById = new Map(groups.map((candidate) => [candidate.region.id, candidate]));
     const isExplicitDescendant = (candidate: GroupDescriptor) => {
       const seen = new Set<string>();
@@ -2109,7 +2435,7 @@ export function AtlasGraph({
         persistPosition: candidate.variant === "custom" || imported?.x !== undefined || imported?.y !== undefined,
       }];
     });
-    const drag: GroupDragState = {
+    return {
       nodeId: group.nodeId,
       regionId: group.region.id,
       variant: group.variant,
@@ -2119,10 +2445,102 @@ export function AtlasGraph({
       memberById: new Map(members.map((placement) => [placement.landmarkId, placement])),
       nestedGroups,
       nestedByNodeId: new Map(nestedGroups.map((nested) => [nested.nodeId, nested])),
-    };
+    } satisfies GroupDragState;
+  }, [customizations.groups, groups, resolvedPlacements]);
+
+  const captureGroupDrag = useCallback((group: GroupDescriptor) => {
+    setMenu(undefined);
+    clearConnectionSelection();
+    const drag = buildGroupDrag(group);
     groupDragRef.current = drag;
     return drag;
-  }, [clearConnectionSelection, customizations.groups, groups, resolvedPlacements]);
+  }, [buildGroupDrag, clearConnectionSelection]);
+
+  const buildSelectionMove = useCallback((
+    primaryId: string,
+    selectedIds: ReadonlySet<string> = selectedCanvasNodeIds,
+  ) => {
+    if (selectedIds.size < 2 || !selectedIds.has(primaryId)) return undefined;
+
+    const groupByNodeId = new Map(groups.map((group) => [group.nodeId, group]));
+    const selectedGroups = [...selectedIds].flatMap((id) => {
+      const group = groupByNodeId.get(id);
+      return group ? [group] : [];
+    });
+    const selectedRegionIds = new Set(selectedGroups.map(({ region }) => region.id));
+    // A selected ancestor already carries its complete hierarchy closure. Drop
+    // selected descendants as movement roots so neither their frames nor their
+    // landmark members can receive the same delta twice.
+    const movementRoots = selectedGroups.filter((candidate) => {
+      const seen = new Set<string>();
+      let parentId = candidate.parentId;
+      while (parentId && !seen.has(parentId)) {
+        if (selectedRegionIds.has(parentId)) return false;
+        seen.add(parentId);
+        parentId = groupByRegionId.get(parentId)?.parentId;
+      }
+      return true;
+    });
+    const positions = new Map<string, { x: number; y: number }>();
+    const landmarkIds = new Set<string>();
+    const groupCarriedLandmarkIds = new Set<string>();
+    const moveGroups = new Map<string, CanvasSelectionMoveGroup>();
+
+    const addLandmark = (placement: Placement | undefined) => {
+      if (!placement || landmarkIds.has(placement.landmarkId)) return;
+      landmarkIds.add(placement.landmarkId);
+      positions.set(placement.landmarkId, { x: placement.x, y: placement.y });
+    };
+    const addGroup = (nodeId: string, origin: CanvasSelectionMoveGroup) => {
+      const existing = moveGroups.get(nodeId);
+      if (!existing) {
+        moveGroups.set(nodeId, origin);
+        positions.set(nodeId, { x: origin.x, y: origin.y });
+      } else if (origin.persistPosition && !existing.persistPosition) {
+        moveGroups.set(nodeId, { ...existing, persistPosition: true });
+      }
+    };
+
+    [...selectedIds].forEach((id) => addLandmark(resolvedPlacements.get(id)));
+    movementRoots.forEach((root) => {
+      const drag = buildGroupDrag(root);
+      drag.members.forEach((placement) => {
+        groupCarriedLandmarkIds.add(placement.landmarkId);
+        addLandmark(placement);
+      });
+      const existing = customizations.groups[root.region.id];
+      addGroup(root.nodeId, {
+        regionId: root.region.id,
+        x: root.x,
+        y: root.y,
+        persistPosition: root.variant === "subject" ||
+          root.variant === "custom" ||
+          existing?.x !== undefined ||
+          existing?.y !== undefined ||
+          existing?.width !== undefined ||
+          existing?.height !== undefined,
+      });
+      drag.nestedGroups.forEach(({ nodeId, ...nested }) => addGroup(nodeId, nested));
+    });
+
+    const primary = positions.get(primaryId);
+    if (!primary) return undefined;
+    const snapNodeIds = new Set<string>(movementRoots.map(({ nodeId }) => nodeId));
+    selectedIds.forEach((id) => {
+      if (resolvedPlacements.has(id) && !groupCarriedLandmarkIds.has(id)) {
+        snapNodeIds.add(id);
+      }
+    });
+    return {
+      primaryId,
+      primaryStartX: primary.x,
+      primaryStartY: primary.y,
+      positions,
+      snapNodeIds,
+      landmarkIds,
+      groups: moveGroups,
+    } satisfies CanvasSelectionMoveState;
+  }, [buildGroupDrag, customizations.groups, groupByRegionId, groups, resolvedPlacements, selectedCanvasNodeIds]);
 
   const renderGroupDrag = useCallback((drag: GroupDragState, deltaX: number, deltaY: number, moveRoot: boolean) => {
     setNodes((current) => current.map((node) => {
@@ -2131,6 +2549,31 @@ export function AtlasGraph({
       if (placement && isLandmarkNode(node)) return { ...node, position: { x: placement.x + deltaX, y: placement.y + deltaY } };
       const nested = drag.nestedByNodeId.get(node.id);
       return nested && isRegionNode(node) ? { ...node, position: { x: nested.x + deltaX, y: nested.y + deltaY } } : node;
+    }));
+  }, [setNodes]);
+
+  const renderSelectionMove = useCallback((
+    drag: CanvasSelectionMoveState,
+    deltaX: number,
+    deltaY: number,
+  ) => {
+    setNodes((current) => current.map((node) => {
+      const origin = drag.positions.get(node.id);
+      return origin
+        ? { ...node, position: { x: origin.x + deltaX, y: origin.y + deltaY } }
+        : node;
+    }));
+  }, [setNodes]);
+
+  const renderCapturedPositions = useCallback((
+    positions: ReadonlyMap<string, CanvasSnapPoint>,
+    delta: CanvasSnapPoint,
+  ) => {
+    setNodes((current) => current.map((node) => {
+      const origin = positions.get(node.id);
+      return origin
+        ? { ...node, position: { x: origin.x + delta.x, y: origin.y + delta.y } }
+        : node;
     }));
   }, [setNodes]);
 
@@ -2149,8 +2592,12 @@ export function AtlasGraph({
     }
     const next = preview ?? groupDragPreviewRef.current;
     groupDragPreviewRef.current = undefined;
-    if (next) renderGroupDrag(next.drag, next.deltaX, next.deltaY, next.moveRoot);
-  }, [renderGroupDrag]);
+    if (next?.selection) {
+      renderSelectionMove(next.selection, next.deltaX, next.deltaY);
+    } else if (next?.drag) {
+      renderGroupDrag(next.drag, next.deltaX, next.deltaY, next.moveRoot);
+    }
+  }, [renderGroupDrag, renderSelectionMove]);
 
   const queueGroupDragPreview = useCallback((preview: GroupDragPreview) => {
     groupDragPreviewRef.current = preview;
@@ -2159,21 +2606,27 @@ export function AtlasGraph({
       groupDragFrameRef.current = undefined;
       const next = groupDragPreviewRef.current;
       groupDragPreviewRef.current = undefined;
-      if (next) renderGroupDrag(next.drag, next.deltaX, next.deltaY, next.moveRoot);
+      if (next?.selection) {
+        renderSelectionMove(next.selection, next.deltaX, next.deltaY);
+      } else if (next?.drag) {
+        renderGroupDrag(next.drag, next.deltaX, next.deltaY, next.moveRoot);
+      }
     });
-  }, [renderGroupDrag]);
+  }, [renderGroupDrag, renderSelectionMove]);
 
   useEffect(() => cancelGroupDragPreview, [cancelGroupDragPreview]);
 
   const commitGroupDrag = useCallback((drag: GroupDragState, rawX: number, rawY: number) => {
-    const finalX = snap(rawX);
-    const finalY = snap(rawY);
+    // The shared resolver has already chosen either an exact smart alignment
+    // or the grid fallback. Re-snapping here would destroy half-grid centres.
+    const finalX = rawX;
+    const finalY = rawY;
     const deltaX = finalX - drag.startX;
     const deltaY = finalY - drag.startY;
     onPlacementChanges(drag.members.map((placement) => ({
       landmarkId: placement.landmarkId,
-      x: snap(placement.x + deltaX),
-      y: snap(placement.y + deltaY),
+      x: placement.x + deltaX,
+      y: placement.y + deltaY,
     })));
     const existing = customizations.groups[drag.regionId];
     const persistRoot = drag.variant === "subject" || drag.variant === "custom" || existing?.x !== undefined || existing?.y !== undefined || existing?.width !== undefined || existing?.height !== undefined;
@@ -2181,8 +2634,8 @@ export function AtlasGraph({
     if (persistRoot) groupPatches.push([drag.regionId, { x: finalX, y: finalY }]);
     drag.nestedGroups.filter(({ persistPosition }) => persistPosition).forEach((nested) => {
       groupPatches.push([nested.regionId, {
-        x: snap(nested.x + deltaX),
-        y: snap(nested.y + deltaY),
+        x: nested.x + deltaX,
+        y: nested.y + deltaY,
       }]);
     });
     changeGroupAppearances(groupPatches);
@@ -2249,6 +2702,41 @@ export function AtlasGraph({
     }
   }, [changeGroupAppearances, customizations.groups, groups, onCustomizationsChange, onPlacementChanges]);
 
+  const commitSelectionMove = useCallback((
+    drag: CanvasSelectionMoveState,
+    rawPrimaryX: number,
+    rawPrimaryY: number,
+  ) => {
+    const finalPrimaryX = rawPrimaryX;
+    const finalPrimaryY = rawPrimaryY;
+    const deltaX = finalPrimaryX - drag.primaryStartX;
+    const deltaY = finalPrimaryY - drag.primaryStartY;
+
+    // Apply one common delta to the captured origins. Avoid independently
+    // snapping secondaries: even legacy off-grid geometry must keep its exact
+    // internal spacing after a batch move.
+    onPlacementChanges([...drag.landmarkIds].flatMap((landmarkId) => {
+      const origin = drag.positions.get(landmarkId);
+      return origin ? [{
+        landmarkId,
+        x: origin.x + deltaX,
+        y: origin.y + deltaY,
+      }] : [];
+    }));
+    changeGroupAppearances([...drag.groups.values()].flatMap((group) => (
+      group.persistPosition
+        ? [[group.regionId, {
+            x: group.x + deltaX,
+            y: group.y + deltaY,
+          }] as const]
+        : []
+    )));
+    // A multi-object move preserves authored hierarchy. Reparenting individual
+    // roots while their siblings are still being committed can create
+    // order-dependent parentage; a later explicit single-group move retains
+    // the existing drop-to-reparent behavior in commitGroupDrag.
+  }, [changeGroupAppearances, onPlacementChanges]);
+
   const flowPointForClient = useCallback((point: DesktopCanvasPoint) => {
     return flowRef.current?.screenToFlowPosition(point);
   }, []);
@@ -2274,6 +2762,26 @@ export function AtlasGraph({
     const current = desktopDragRef.current;
     if (current?.event.gestureId === event.gestureId) return current;
 
+    const selection = event.selectionNodeIds
+      ? buildSelectionMove(event.nodeId, new Set(event.selectionNodeIds))
+      : undefined;
+    if (selection) {
+      const runtime: DesktopDragRuntime = {
+        event,
+        startX: selection.primaryStartX,
+        startY: selection.primaryStartY,
+        selection,
+        ended: false,
+      };
+      desktopDragRef.current = runtime;
+      beginMovementAssist(
+        selection.primaryId,
+        selection.positions,
+        selection.snapNodeIds,
+      );
+      return runtime;
+    }
+
     if (event.nodeKind === "group") {
       const group = groups.find(({ nodeId }) => nodeId === event.nodeId);
       if (!group) return undefined;
@@ -2286,6 +2794,21 @@ export function AtlasGraph({
         ended: false,
       };
       desktopDragRef.current = runtime;
+      beginMovementAssist(
+        drag.nodeId,
+        new Map<string, CanvasSnapPoint>([
+          [drag.nodeId, { x: drag.startX, y: drag.startY }],
+          ...drag.members.map((member) => [
+            member.landmarkId,
+            { x: member.x, y: member.y },
+          ] as const),
+          ...drag.nestedGroups.map((nested) => [
+            nested.nodeId,
+            { x: nested.x, y: nested.y },
+          ] as const),
+        ]),
+        new Set([drag.nodeId]),
+      );
       return runtime;
     }
 
@@ -2298,15 +2821,36 @@ export function AtlasGraph({
       ended: false,
     };
     desktopDragRef.current = runtime;
+    beginMovementAssist(
+      event.nodeId,
+      new Map([[event.nodeId, { x: placement.x, y: placement.y }]]),
+      new Set([event.nodeId]),
+    );
     return runtime;
-  }, [captureGroupDrag, groups, resolvedPlacements]);
+  }, [beginMovementAssist, buildSelectionMove, captureGroupDrag, groups, resolvedPlacements]);
 
   const previewDesktopDrag = useCallback((
     runtime: DesktopDragRuntime,
     event: DesktopCanvasDragEvent,
   ) => {
-    const delta = desktopCanvasDragDelta(event);
-    runtime.event = event;
+    const rawDelta = desktopCanvasDragDelta(event);
+    const delta = event.phase === "start"
+      ? { x: 0, y: 0 }
+      : resolveMovementAssist(event.nodeId, rawDelta, {
+          altKey: event.smartSnapDisabled,
+          axisLock: event.axisLock,
+        });
+    runtime.event = {
+      ...event,
+      pointer: {
+        x: event.startPointer.x + delta.x,
+        y: event.startPointer.y + delta.y,
+      },
+    };
+    if (runtime.selection) {
+      renderSelectionMove(runtime.selection, delta.x, delta.y);
+      return;
+    }
     if (runtime.group) {
       renderGroupDrag(runtime.group, delta.x, delta.y, true);
       return;
@@ -2322,22 +2866,16 @@ export function AtlasGraph({
           }
         : node
     ));
-  }, [renderGroupDrag, setNodes]);
+  }, [renderGroupDrag, renderSelectionMove, resolveMovementAssist, setNodes]);
 
   const applyDesktopDrag = useCallback((event: DesktopCanvasDragEvent) => {
     const runtime = ensureDesktopDrag(event);
     if (!runtime || runtime.ended) return;
     cancelGroupDragPreview();
-    const localNativeLandmarkOwnsPreview = (
-      event.nodeKind === "landmark" &&
-      event.ownerSurfaceId === desktopSurfaceId &&
-      activeNodeDragRef.current?.primaryId === event.nodeId &&
-      event.phase !== "cancel"
-    );
-    // The origin landmark is already moved by React Flow. Its transport still
-    // needs a runtime and outbound packets, but writing the same local geometry
-    // through a second setNodes path produces order-dependent jitter.
-    if (!localNativeLandmarkOwnsPreview) previewDesktopDrag(runtime, event);
+    // Every surface, including the native landmark owner, renders the same
+    // resolved packet. This makes the magnetic result authoritative and avoids
+    // React Flow choosing a different grid point at a monitor boundary.
+    previewDesktopDrag(runtime, event);
     if (event.phase === "start" || event.phase === "move") {
       // Remote monitor surfaces participate in the same gesture even though
       // React Flow never emits a native onNodeDragStart there. Mark them busy
@@ -2371,7 +2909,8 @@ export function AtlasGraph({
     setIsNodeDragging(false);
 
     if (event.phase === "cancel") {
-      if (runtime.group) renderGroupDrag(runtime.group, 0, 0, true);
+      if (runtime.selection) renderSelectionMove(runtime.selection, 0, 0);
+      else if (runtime.group) renderGroupDrag(runtime.group, 0, 0, true);
       else {
         setNodes((current) => current.map((node) =>
           node.id === event.nodeId && isLandmarkNode(node)
@@ -2380,6 +2919,7 @@ export function AtlasGraph({
         ));
       }
       groupDragRef.current = undefined;
+      clearMovementAssist();
       return;
     }
 
@@ -2393,8 +2933,14 @@ export function AtlasGraph({
       !committedDesktopGestures.has(event.gestureId)
     ) {
       rememberCommittedDesktopGesture(event.gestureId);
-      const delta = desktopCanvasDragDelta(event);
-      if (runtime.group) {
+      const delta = desktopCanvasDragDelta(runtime.event);
+      if (runtime.selection) {
+        commitSelectionMove(
+          runtime.selection,
+          runtime.startX + delta.x,
+          runtime.startY + delta.y,
+        );
+      } else if (runtime.group) {
         commitGroupDrag(
           runtime.group,
           runtime.startX + delta.x,
@@ -2403,14 +2949,17 @@ export function AtlasGraph({
       } else {
         onPlacementChange({
           landmarkId: event.nodeId,
-          x: snap(runtime.startX + delta.x),
-          y: snap(runtime.startY + delta.y),
+          x: runtime.startX + delta.x,
+          y: runtime.startY + delta.y,
         });
       }
     }
     groupDragRef.current = undefined;
+    clearMovementAssist();
   }, [
     cancelGroupDragPreview,
+    clearMovementAssist,
+    commitSelectionMove,
     commitGroupDrag,
     desktopSurfaceId,
     ensureDesktopDrag,
@@ -2418,6 +2967,7 @@ export function AtlasGraph({
     previewDesktopDrag,
     rememberFinishedDesktopGesture,
     renderGroupDrag,
+    renderSelectionMove,
     setNodes,
   ]);
 
@@ -2442,37 +2992,48 @@ export function AtlasGraph({
       ownerSurfaceId: desktopSurfaceId,
       nodeId: node.id,
       nodeKind: isRegionNode(node) ? "group" : "landmark",
+      ...(selectedCanvasNodeIds.has(node.id) && selectedCanvasNodeIds.size > 1
+        ? { selectionNodeIds: [...selectedCanvasNodeIds] }
+        : {}),
       phase: "start",
       startPointer: pointer,
       pointer,
     };
     publishDesktopDrag(event);
-  }, [desktopSurfaceId, flowPointForClient, onDesktopCanvasDrag, publishDesktopDrag]);
+  }, [desktopSurfaceId, flowPointForClient, onDesktopCanvasDrag, publishDesktopDrag, selectedCanvasNodeIds]);
 
   const forwardDesktopPointer = useCallback((
     phase: "move" | "end" | "cancel",
     clientPoint?: DesktopCanvasPoint,
+    modifiers: CanvasMovementModifiers = {},
   ) => {
     const runtime = desktopDragRef.current;
     if (!runtime || runtime.ended) return;
     const rawPointer = clientPoint
       ? flowPointForClient(clientPoint) ?? runtime.event.pointer
       : runtime.event.pointer;
-    const pointer = phase === "cancel"
-      ? rawPointer
-      : {
-          x: runtime.event.startPointer.x + snap(rawPointer.x - runtime.event.startPointer.x),
-          y: runtime.event.startPointer.y + snap(rawPointer.y - runtime.event.startPointer.y),
-        };
+    const rawDelta = {
+      x: rawPointer.x - runtime.event.startPointer.x,
+      y: rawPointer.y - runtime.event.startPointer.y,
+    };
+    const delta = phase === "cancel"
+      ? rawDelta
+      : resolveMovementAssist(runtime.event.nodeId, rawDelta, modifiers);
+    const pointer = {
+      x: runtime.event.startPointer.x + delta.x,
+      y: runtime.event.startPointer.y + delta.y,
+    };
     publishDesktopDrag({
       ...runtime.event,
       phase,
       pointer,
+      smartSnapDisabled: modifiers.altKey || undefined,
+      axisLock: movementAssistRef.current?.axisLock,
       ...(phase === "end" && desktopSurfaceId
         ? { finalizerSurfaceId: desktopSurfaceId }
         : {}),
     });
-  }, [desktopSurfaceId, flowPointForClient, publishDesktopDrag]);
+  }, [desktopSurfaceId, flowPointForClient, publishDesktopDrag, resolveMovementAssist]);
 
   useEffect(() => {
     if (!desktopSurfaceId || !onDesktopCanvasDrag) return;
@@ -2483,14 +3044,26 @@ export function AtlasGraph({
       // release happened elsewhere. Never turn ordinary no-button hover into
       // continued movement merely because this surface is not the origin.
       if ((event.buttons & 1) === 1) {
-        forwardDesktopPointer("move", { x: event.clientX, y: event.clientY });
+        forwardDesktopPointer(
+          "move",
+          { x: event.clientX, y: event.clientY },
+          { shiftKey: event.shiftKey, altKey: event.altKey },
+        );
       } else {
-        forwardDesktopPointer("end", { x: event.clientX, y: event.clientY });
+        forwardDesktopPointer(
+          "end",
+          { x: event.clientX, y: event.clientY },
+          { shiftKey: event.shiftKey, altKey: event.altKey },
+        );
       }
     };
     const end = (event: PointerEvent) => {
       if (event.button !== 0 && event.buttons !== 0) return;
-      forwardDesktopPointer("end", { x: event.clientX, y: event.clientY });
+      forwardDesktopPointer(
+        "end",
+        { x: event.clientX, y: event.clientY },
+        { shiftKey: event.shiftKey, altKey: event.altKey },
+      );
     };
     const cancelFromKeyboard = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -2536,24 +3109,47 @@ export function AtlasGraph({
     if (isRegionNode(node)) return;
     setMenu(undefined);
     clearConnectionSelection();
-    if (!selectedCanvasNodeIds.has(node.id)) {
-      const additive = !desktopSurfaceId && "ctrlKey" in event && Boolean(
-        event.ctrlKey || event.metaKey || event.shiftKey
-      );
+    const additive = !desktopSurfaceId && "ctrlKey" in event && Boolean(
+      event.ctrlKey || event.metaKey || event.shiftKey
+    );
+    const primaryWasSelected = selectedCanvasNodeIds.has(node.id);
+    if (!primaryWasSelected) {
       // XYFlow decides its drag closure before this callback. When a modifier
       // drag already contains the prior selection plus this node, mirror that
       // closure instead of painting only the primary as selected while several
-      // objects move. Desktop remains deliberately single-owner for now.
+      // objects move. Desktop transports the explicit selection separately.
       requestCanvasNodeSelection(node.id, additive ? "add" : "replace");
     }
+    const gestureSelectionIds = primaryWasSelected
+      ? new Set(selectedCanvasNodeIds)
+      : additive
+        ? new Set([...selectedCanvasNodeIds, node.id])
+        : new Set([node.id]);
+    if (!desktopSurfaceId && (primaryWasSelected || additive)) {
+      (draggedNodes ?? []).forEach((candidate) => {
+        if (candidate.selected) gestureSelectionIds.add(candidate.id);
+      });
+    }
+    const selection = buildSelectionMove(node.id, gestureSelectionIds);
     const candidates = (draggedNodes?.length ? draggedNodes : [node])
       .filter(isLandmarkNode);
+    const positions = selection?.positions ?? new Map(candidates.map((candidate) => [
+      candidate.id,
+      { ...candidate.position },
+    ]));
+    const pending = pendingLandmarkPointerRef.current;
+    pendingLandmarkPointerRef.current = undefined;
+    const startPoint = pending?.nodeId === node.id
+      ? { x: pending.clientX, y: pending.clientY }
+      : "clientX" in event && "clientY" in event
+        ? { x: event.clientX, y: event.clientY }
+        : undefined;
     activeNodeDragRef.current = {
       primaryId: node.id,
-      positions: new Map(candidates.map((candidate) => [
-        candidate.id,
-        { ...candidate.position },
-      ])),
+      positions,
+      selection,
+      pointerStart: startPoint ? flowPointForClient(startPoint) : undefined,
+      lastDelta: { x: 0, y: 0 },
     };
     cancelledNodeDragsRef.current.delete(node.id);
     cancelledNodeDragStatesRef.current.delete(node.id);
@@ -2564,28 +3160,36 @@ export function AtlasGraph({
       "clientX" in event &&
       "clientY" in event
     ) {
-      const pending = pendingLandmarkPointerRef.current;
-      pendingLandmarkPointerRef.current = undefined;
-      const startPoint = pending?.nodeId === node.id
-        ? { x: pending.clientX, y: pending.clientY }
-        : { x: event.clientX, y: event.clientY };
-      beginDesktopDrag(node, startPoint);
+      beginDesktopDrag(node, startPoint ?? { x: event.clientX, y: event.clientY });
       // The move that crossed React Flow's threshold reached window capture
       // before onNodeDragStart created the transferable runtime. Publish it
       // now so the first few pixels are not lost at the monitor seam.
-      forwardDesktopPointer("move", { x: event.clientX, y: event.clientY });
+      forwardDesktopPointer(
+        "move",
+        { x: event.clientX, y: event.clientY },
+        { shiftKey: event.shiftKey, altKey: event.altKey },
+      );
+    } else {
+      beginMovementAssist(
+        node.id,
+        positions,
+        selection?.snapNodeIds ?? new Set([node.id]),
+      );
     }
   }, [
     beginDesktopDrag,
+    beginMovementAssist,
+    buildSelectionMove,
     clearConnectionSelection,
     desktopSurfaceId,
     forwardDesktopPointer,
+    flowPointForClient,
     onDesktopCanvasDrag,
     requestCanvasNodeSelection,
     selectedCanvasNodeIds,
   ]);
 
-  const handleNodeDrag = useCallback<OnNodeDrag<AtlasGraphNode>>((_event, node) => {
+  const handleNodeDrag = useCallback<OnNodeDrag<AtlasGraphNode>>((event, node) => {
     if (isRegionNode(node)) return;
     const active = activeNodeDragRef.current;
     if (cancelledNodeDragsRef.current.has(node.id)) {
@@ -2596,19 +3200,29 @@ export function AtlasGraph({
       }));
       return;
     }
-    // Cross-monitor packets currently describe one direct-manipulation owner.
-    // Keep any prior multi-selection visually stable instead of allowing
-    // React Flow to move extra nodes that the receiving monitors cannot know.
-    if (desktopSurfaceId && active && active.positions.size > 1) {
-      setNodes((current) => current.map((candidate) => {
-        if (candidate.id === active.primaryId) return candidate;
-        const origin = active.positions.get(candidate.id);
-        return origin ? { ...candidate, position: { ...origin } } : candidate;
-      }));
-    }
-  }, [desktopSurfaceId, setNodes]);
+    if (!active || active.primaryId !== node.id) return;
+    // Desktop pointer capture owns the shared delta and writes the preview on
+    // every surface. Letting the native owner resolve it again causes a small
+    // but visible tug-of-war at monitor seams.
+    if (desktopDragRef.current?.event.nodeId === node.id) return;
+    const pointer = "clientX" in event && "clientY" in event
+      ? flowPointForClient({ x: event.clientX, y: event.clientY })
+      : undefined;
+    const origin = active.positions.get(node.id);
+    const rawDelta = pointer && active.pointerStart
+      ? { x: pointer.x - active.pointerStart.x, y: pointer.y - active.pointerStart.y }
+      : origin
+        ? { x: node.position.x - origin.x, y: node.position.y - origin.y }
+        : active.lastDelta;
+    const delta = resolveMovementAssist(node.id, rawDelta, {
+      shiftKey: "shiftKey" in event && event.shiftKey,
+      altKey: "altKey" in event && event.altKey,
+    });
+    active.lastDelta = delta;
+    renderCapturedPositions(active.positions, delta);
+  }, [flowPointForClient, renderCapturedPositions, resolveMovementAssist, setNodes]);
 
-  const handleNodeDragStop = useCallback<OnNodeDrag<AtlasGraphNode>>((event, node, draggedNodes) => {
+  const handleNodeDragStop = useCallback<OnNodeDrag<AtlasGraphNode>>((event, node, _draggedNodes) => {
     if (isRegionNode(node)) return;
     setIsNodeDragging(false);
     const active = activeNodeDragRef.current;
@@ -2620,13 +3234,18 @@ export function AtlasGraph({
         const origin = cancelled.positions.get(candidate.id);
         return origin ? { ...candidate, position: { ...origin } } : candidate;
       }));
+      clearMovementAssist();
       return;
     }
     const desktopDrag = desktopDragRef.current;
     if (desktopDrag?.event.nodeId === node.id) {
       if (!desktopDrag.ended) {
         if ("clientX" in event && "clientY" in event) {
-          forwardDesktopPointer("end", { x: event.clientX, y: event.clientY });
+          forwardDesktopPointer(
+            "end",
+            { x: event.clientX, y: event.clientY },
+            { shiftKey: event.shiftKey, altKey: event.altKey },
+          );
         } else {
           publishDesktopDrag({
             ...desktopDrag.event,
@@ -2639,42 +3258,65 @@ export function AtlasGraph({
           });
         }
       }
-      if (active && active.positions.size > 1) {
-        setNodes((current) => current.map((candidate) => {
-          if (candidate.id === active.primaryId) return candidate;
-          const origin = active.positions.get(candidate.id);
-          return origin ? { ...candidate, position: { ...origin } } : candidate;
-        }));
-      }
       return;
     }
-    const finalNodes = (draggedNodes?.length ? draggedNodes : [node])
-      .filter(isLandmarkNode);
-    const finalById = new Map(finalNodes.map((candidate) => [candidate.id, candidate]));
-    finalById.set(node.id, node);
-    const placements = active
-      ? [...active.positions.keys()].flatMap((id) => {
-          const candidate = finalById.get(id);
-          return candidate ? [{
-            landmarkId: id,
-            x: snap(candidate.position.x),
-            y: snap(candidate.position.y),
-          }] : [];
-        })
-      : [{ landmarkId: node.id, x: snap(node.position.x), y: snap(node.position.y) }];
+    if (!active || active.primaryId !== node.id) {
+      onPlacementChange({
+        landmarkId: node.id,
+        x: snap(node.position.x),
+        y: snap(node.position.y),
+      });
+      clearMovementAssist();
+      return;
+    }
+    const pointer = "clientX" in event && "clientY" in event
+      ? flowPointForClient({ x: event.clientX, y: event.clientY })
+      : undefined;
+    const origin = active.positions.get(node.id);
+    const rawDelta = pointer && active.pointerStart
+      ? { x: pointer.x - active.pointerStart.x, y: pointer.y - active.pointerStart.y }
+      : origin
+        ? { x: node.position.x - origin.x, y: node.position.y - origin.y }
+        : active.lastDelta;
+    const delta = resolveMovementAssist(node.id, rawDelta, {
+      shiftKey: "shiftKey" in event && event.shiftKey,
+      altKey: "altKey" in event && event.altKey,
+    });
+    active.lastDelta = delta;
+    renderCapturedPositions(active.positions, delta);
+    clearMovementAssist();
+    if (active.selection) {
+      commitSelectionMove(
+        active.selection,
+        active.selection.primaryStartX + delta.x,
+        active.selection.primaryStartY + delta.y,
+      );
+      return;
+    }
+    const placements = [...active.positions].flatMap(([id, position]) => (
+      resolvedPlacements.has(id)
+        ? [{ landmarkId: id, x: position.x + delta.x, y: position.y + delta.y }]
+        : []
+    ));
     if (placements.length > 1) onPlacementChanges(placements);
     else if (placements[0]) onPlacementChange(placements[0]);
   }, [
+    clearMovementAssist,
     desktopSurfaceId,
+    commitSelectionMove,
+    flowPointForClient,
     forwardDesktopPointer,
     onPlacementChange,
     onPlacementChanges,
     publishDesktopDrag,
+    renderCapturedPositions,
+    resolveMovementAssist,
+    resolvedPlacements,
     setNodes,
   ]);
 
   titleDragHandlersRef.current = {
-    start: (regionId, startClientX, startClientY, clientX, clientY) => {
+    start: (regionId, startClientX, startClientY, clientX, clientY, shiftKey, altKey) => {
       cancelGroupDragPreview();
       const group = groupByRegionId.get(regionId);
       if (group) {
@@ -2682,73 +3324,163 @@ export function AtlasGraph({
         const node = regionNodes.find((candidate) => candidate.id === group.nodeId);
         if (node && desktopSurfaceId && onDesktopCanvasDrag) {
           beginDesktopDrag(node, { x: startClientX, y: startClientY });
-          forwardDesktopPointer("move", { x: clientX, y: clientY });
-        } else captureGroupDrag(group);
+          forwardDesktopPointer(
+            "move",
+            { x: clientX, y: clientY },
+            { shiftKey, altKey },
+          );
+        } else {
+          const selection = buildSelectionMove(group.nodeId);
+          if (selection) {
+            selectionMoveRef.current = selection;
+            beginMovementAssist(
+              selection.primaryId,
+              selection.positions,
+              selection.snapNodeIds,
+            );
+          } else {
+            const drag = captureGroupDrag(group);
+            const positions = new Map<string, CanvasSnapPoint>([
+              [drag.nodeId, { x: drag.startX, y: drag.startY }],
+              ...drag.members.map((member) => [
+                member.landmarkId,
+                { x: member.x, y: member.y },
+              ] as const),
+              ...drag.nestedGroups.map((nested) => [
+                nested.nodeId,
+                { x: nested.x, y: nested.y },
+              ] as const),
+            ]);
+            beginMovementAssist(drag.nodeId, positions, new Set([drag.nodeId]));
+          }
+        }
       }
     },
-    move: (regionId, x, y) => {
+    move: (regionId, x, y, _clientX, _clientY, shiftKey, altKey) => {
+      const group = groupByRegionId.get(regionId);
+      const selection = selectionMoveRef.current;
       const drag = groupDragRef.current;
       const desktopDrag = desktopDragRef.current;
-      if (desktopDrag && drag && desktopDrag.event.nodeId === drag.nodeId) return;
+      if (desktopDrag && group && desktopDrag.event.nodeId === group.nodeId) return;
+      if (selection && group && selection.primaryId === group.nodeId) {
+        const delta = resolveMovementAssist(
+          selection.primaryId,
+          { x, y },
+          { shiftKey, altKey },
+        );
+        queueGroupDragPreview({
+          selection,
+          deltaX: delta.x,
+          deltaY: delta.y,
+          moveRoot: true,
+        });
+        return;
+      }
       if (drag?.regionId === regionId) {
-        const snappedX = snap(drag.startX + x) - drag.startX;
-        const snappedY = snap(drag.startY + y) - drag.startY;
-        queueGroupDragPreview({ drag, deltaX: snappedX, deltaY: snappedY, moveRoot: true });
+        const delta = resolveMovementAssist(
+          drag.nodeId,
+          { x, y },
+          { shiftKey, altKey },
+        );
+        queueGroupDragPreview({ drag, deltaX: delta.x, deltaY: delta.y, moveRoot: true });
       }
     },
-    end: (regionId, x, y, clientX, clientY) => {
+    end: (regionId, x, y, clientX, clientY, shiftKey, altKey) => {
       setIsNodeDragging(false);
+      const group = groupByRegionId.get(regionId);
+      const selection = selectionMoveRef.current;
       const drag = groupDragRef.current;
       const desktopDrag = desktopDragRef.current;
-      if (desktopDrag && drag && desktopDrag.event.nodeId === drag.nodeId) {
+      if (desktopDrag && group && desktopDrag.event.nodeId === group.nodeId) {
         if (!desktopDrag.ended) {
-          forwardDesktopPointer("end", { x: clientX, y: clientY });
+          forwardDesktopPointer(
+            "end",
+            { x: clientX, y: clientY },
+            { shiftKey, altKey },
+          );
         }
         return;
       }
+      selectionMoveRef.current = undefined;
       groupDragRef.current = undefined;
+      if (selection && group && selection.primaryId === group.nodeId) {
+        const delta = resolveMovementAssist(
+          selection.primaryId,
+          { x, y },
+          { shiftKey, altKey },
+        );
+        const finalX = selection.primaryStartX + delta.x;
+        const finalY = selection.primaryStartY + delta.y;
+        flushGroupDragPreview({
+          selection,
+          deltaX: delta.x,
+          deltaY: delta.y,
+          moveRoot: true,
+        });
+        clearMovementAssist();
+        commitSelectionMove(selection, finalX, finalY);
+        return;
+      }
       if (!drag || drag.regionId !== regionId) return;
-      const finalX = snap(drag.startX + x);
-      const finalY = snap(drag.startY + y);
+      const delta = resolveMovementAssist(
+        drag.nodeId,
+        { x, y },
+        { shiftKey, altKey },
+      );
+      const finalX = drag.startX + delta.x;
+      const finalY = drag.startY + delta.y;
       flushGroupDragPreview({
         drag,
-        deltaX: finalX - drag.startX,
-        deltaY: finalY - drag.startY,
+        deltaX: delta.x,
+        deltaY: delta.y,
         moveRoot: true,
       });
+      clearMovementAssist();
       commitGroupDrag(drag, finalX, finalY);
     },
     cancel: (regionId) => {
       setIsNodeDragging(false);
+      const group = groupByRegionId.get(regionId);
+      const selection = selectionMoveRef.current;
       const drag = groupDragRef.current;
-      if (!drag || drag.regionId !== regionId) return;
       const desktopDrag = desktopDragRef.current;
-      if (desktopDrag && desktopDrag.event.nodeId === drag.nodeId && !desktopDrag.ended) {
+      if (desktopDrag && group && desktopDrag.event.nodeId === group.nodeId && !desktopDrag.ended) {
         forwardDesktopPointer("cancel");
         return;
       }
+      if (selection && group && selection.primaryId === group.nodeId) {
+        cancelGroupDragPreview();
+        renderSelectionMove(selection, 0, 0);
+        selectionMoveRef.current = undefined;
+        clearMovementAssist();
+        return;
+      }
+      if (!drag || drag.regionId !== regionId) return;
       cancelGroupDragPreview();
       renderGroupDrag(drag, 0, 0, true);
       groupDragRef.current = undefined;
+      clearMovementAssist();
     },
   };
 
   const handleEdgeClick = useCallback<EdgeMouseHandler<Edge>>((event, edge) => {
     setMenu(undefined);
     if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      clearActiveShellSelection();
       clearCanvasNodeSelection();
       setSelectedConnectionIds(new Set([edge.id]));
     }
-  }, [clearCanvasNodeSelection]);
+  }, [clearActiveShellSelection, clearCanvasNodeSelection]);
 
   const handleEdgeContextMenu = useCallback<EdgeMouseHandler<Edge>>((event, edge) => {
     event.preventDefault();
     if (!selectedConnectionIds.has(edge.id)) {
+      clearActiveShellSelection(true);
       clearCanvasNodeSelection();
       selectOnlyConnection(edge.id);
     }
     setMenu({ kind: "connection", connectionId: edge.id, x: event.clientX, y: event.clientY });
-  }, [clearCanvasNodeSelection, selectOnlyConnection, selectedConnectionIds]);
+  }, [clearActiveShellSelection, clearCanvasNodeSelection, selectOnlyConnection, selectedConnectionIds]);
 
   const handleEdgesChange = useCallback<OnEdgesChange<Edge>>((changes) => {
     const selectionChanges = changes.filter((change) => change.type === "select");
@@ -2843,9 +3575,10 @@ export function AtlasGraph({
     setInformalNotePending(false);
     setInformalNoteError(undefined);
     setMenu({ kind: "canvas", x: event.clientX, y: event.clientY, flowX, flowY, subjectId: subjectAt(flowX, flowY) });
+    clearActiveShellSelection(true);
     clearCanvasNodeSelection();
     clearConnectionSelection();
-  }, [clearCanvasNodeSelection, clearConnectionSelection, subjectAt]);
+  }, [clearActiveShellSelection, clearCanvasNodeSelection, clearConnectionSelection, subjectAt]);
 
   const submitLandmarkCreation = useCallback(async (
     kind: EditableLandmarkKind,
@@ -2933,7 +3666,7 @@ export function AtlasGraph({
       ? uniqueId("subject")
       : parent?.region.subjectId ?? menu.subjectId;
     const defaults = level === "subject"
-      ? { width: 1120, height: 700, shape: "rectangle" as const, borderStyle: "double" as const }
+      ? { width: 1120, height: 700, shape: "rounded-rectangle" as const, borderStyle: "solid" as const }
       : level === "group"
         ? { width: 700, height: 448, shape: "rectangle" as const, borderStyle: "solid" as const }
         : { width: 420, height: 252, shape: "oval" as const, borderStyle: "solid" as const };
@@ -2952,6 +3685,7 @@ export function AtlasGraph({
         color: DEFAULT_GROUP_COLOR,
         shape: defaults.shape,
         borderStyle: defaults.borderStyle,
+        ...(level === "subject" ? { subjectFrameStyle: DEFAULT_SUBJECT_FRAME_STYLE } : {}),
         titlePosition: "top-left",
       }],
     }));
@@ -2990,8 +3724,10 @@ export function AtlasGraph({
       isNodeDragging ||
       reconnectGestureRef.current ||
       groupDragRef.current ||
+      selectionMoveRef.current ||
       activeDirectGestureRef.current ||
       activeNodeDragRef.current ||
+      movementAssistRef.current ||
       (desktopDragRef.current && !desktopDragRef.current.ended)
     ) return false;
     const landmarkIds: string[] = [];
@@ -3200,6 +3936,60 @@ export function AtlasGraph({
     );
   }, [baseEdges, nodeBlueprints, publishNavigationViewport, selectedConnectionId, selectedLandmarkId]);
 
+  const nudgeSelectedCanvasObjects = useCallback((delta: CanvasSnapPoint) => {
+    const primaryId = [...selectedCanvasNodeIds][0];
+    if (!primaryId) return false;
+    setMenu(undefined);
+    clearConnectionSelection();
+    clearMovementAssist();
+
+    const selection = buildSelectionMove(primaryId);
+    if (selection) {
+      renderSelectionMove(selection, delta.x, delta.y);
+      commitSelectionMove(
+        selection,
+        selection.primaryStartX + delta.x,
+        selection.primaryStartY + delta.y,
+      );
+      return true;
+    }
+
+    const group = groups.find(({ nodeId }) => nodeId === primaryId);
+    if (group) {
+      const drag = buildGroupDrag(group);
+      renderGroupDrag(drag, delta.x, delta.y, true);
+      commitGroupDrag(drag, drag.startX + delta.x, drag.startY + delta.y);
+      return true;
+    }
+
+    const placement = resolvedPlacements.get(primaryId);
+    if (!placement) return false;
+    renderCapturedPositions(
+      new Map([[primaryId, { x: placement.x, y: placement.y }]]),
+      delta,
+    );
+    onPlacementChange({
+      landmarkId: primaryId,
+      x: placement.x + delta.x,
+      y: placement.y + delta.y,
+    });
+    return true;
+  }, [
+    buildGroupDrag,
+    buildSelectionMove,
+    clearConnectionSelection,
+    clearMovementAssist,
+    commitGroupDrag,
+    commitSelectionMove,
+    groups,
+    onPlacementChange,
+    renderCapturedPositions,
+    renderGroupDrag,
+    renderSelectionMove,
+    resolvedPlacements,
+    selectedCanvasNodeIds,
+  ]);
+
   const cancelCanvasInteraction = useCallback(() => {
     const hadInteraction = Boolean(
       menu ||
@@ -3245,6 +4035,7 @@ export function AtlasGraph({
         return origin ? { ...node, position: { ...origin } } : node;
       }));
     }
+    clearMovementAssist();
 
     const desktopRuntime = desktopDragRef.current;
     if (desktopRuntime && !desktopRuntime.ended) {
@@ -3253,11 +4044,14 @@ export function AtlasGraph({
     }
 
     cancelGroupDragPreview();
+    const selectionMove = selectionMoveRef.current;
+    if (selectionMove) renderSelectionMove(selectionMove, 0, 0);
+    selectionMoveRef.current = undefined;
     const groupDrag = groupDragRef.current;
     if (groupDrag) renderGroupDrag(groupDrag, 0, 0, true);
     groupDragRef.current = undefined;
     return hadInteraction;
-  }, [cancelGroupDragPreview, forwardDesktopPointer, isConnecting, menu, renderGroupDrag, setNodes]);
+  }, [cancelGroupDragPreview, clearMovementAssist, forwardDesktopPointer, isConnecting, menu, renderGroupDrag, renderSelectionMove, setNodes]);
 
   useEffect(() => {
     // Desktop window focus legitimately changes while crossing monitor
@@ -3292,8 +4086,25 @@ export function AtlasGraph({
         event.preventDefault();
         const cancelled = cancelCanvasInteraction();
         if (!cancelled) {
+          clearActiveShellSelection();
           clearCanvasNodeSelection();
           clearConnectionSelection();
+        }
+      } else if (
+        !menu &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+      ) {
+        const step = GRID * (event.shiftKey ? 4 : 1);
+        const delta = {
+          x: event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0,
+          y: event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0,
+        };
+        if (nudgeSelectedCanvasObjects(delta)) {
+          event.preventDefault();
+          event.stopPropagation();
         }
       } else if (event.key === "Delete" || event.key === "Backspace") {
         // This is an application canvas, never browser history navigation.
@@ -3318,9 +4129,9 @@ export function AtlasGraph({
         focusSelected();
       }
     };
-    window.addEventListener("keydown", navigateCanvas);
-    return () => window.removeEventListener("keydown", navigateCanvas);
-  }, [cancelCanvasInteraction, clearCanvasNodeSelection, clearConnectionSelection, deleteSelectedCanvasObjects, fitMap, focusSelected, zoomMap]);
+    window.addEventListener("keydown", navigateCanvas, true);
+    return () => window.removeEventListener("keydown", navigateCanvas, true);
+  }, [cancelCanvasInteraction, clearActiveShellSelection, clearCanvasNodeSelection, clearConnectionSelection, deleteSelectedCanvasObjects, fitMap, focusSelected, menu, nudgeSelectedCanvasObjects, zoomMap]);
 
   const canFocusSelected = Boolean(
     selectedLandmarkId || selectedConnectionId || nodes.some((node) => node.selected),
@@ -3329,9 +4140,6 @@ export function AtlasGraph({
   const contextLandmark = menu?.kind === "landmark" ? allLandmarkById.get(menu.landmarkId) : undefined;
   const contextLandmarkNode = menu?.kind === "landmark" ? nodeBlueprints.find((node): node is LandmarkGraphNode => node.id === menu.landmarkId && isLandmarkNode(node)) : undefined;
   const contextGroup = menu?.kind === "group" ? groupByRegionId.get(menu.regionId) : undefined;
-  const landmarkPanel = menuPanel === "kind" || menuPanel === "shape" || menuPanel === "content" || menuPanel === "size" || menuPanel === "color" ? menuPanel : "kind";
-  const groupPanel = menuPanel === "level" || menuPanel === "shape" || menuPanel === "anchor" || menuPanel === "frame" || menuPanel === "color" ? menuPanel : "level";
-  const connectionPanel = menuPanel === "direction" || menuPanel === "line" || menuPanel === "path" || menuPanel === "color" ? menuPanel : "direction";
 
   return (
     <div
@@ -3377,6 +4185,7 @@ export function AtlasGraph({
         onEdgeContextMenu={handleEdgeContextMenu}
         onPaneClick={() => {
           setMenu(undefined);
+          clearActiveShellSelection();
           clearCanvasNodeSelection();
           clearConnectionSelection();
         }}
@@ -3406,7 +4215,10 @@ export function AtlasGraph({
         connectionLineStyle={{ stroke: neutralConnectionColor, strokeWidth: 1.5 }}
         minZoom={.04 / (Number.isFinite(viewportScaleFactor) && viewportScaleFactor > 0 ? viewportScaleFactor : 1)}
         maxZoom={1.8 / (Number.isFinite(viewportScaleFactor) && viewportScaleFactor > 0 ? viewportScaleFactor : 1)}
-        snapToGrid
+        // One resolver owns grid fallback and smart guides. Enabling XYFlow's
+        // independent grid would double-snap landmark drags before groups see
+        // the same pointer delta.
+        snapToGrid={false}
         snapGrid={[GRID, GRID]}
         zoomOnDoubleClick={false}
         panOnDrag={[2]}
@@ -3429,6 +4241,11 @@ export function AtlasGraph({
         nodeDragThreshold={4}
         proOptions={proOptions}
       >
+        {movementGuides.length > 0 && (
+          <Suspense fallback={null}>
+            <LazyCanvasAlignmentGuides guides={movementGuides} />
+          </Suspense>
+        )}
         <Background color="#111418" gap={GRID} size={1.45} variant={BackgroundVariant.Dots} />
       </ReactFlow>
 
@@ -3446,163 +4263,68 @@ export function AtlasGraph({
         <button type="button" aria-label="Focus selected" title="Focus selected · F" disabled={!canFocusSelected} onClick={focusSelected}><Focus size={15} aria-hidden="true" /></button>
       </nav>
 
-      <Suspense fallback={null}>
-      {menu?.kind === "canvas" && (
-        <DeferredContextMenu
-          key={landmarkCreationKind ? `name:${landmarkCreationKind}` : groupCreationLevel ? `name:${groupCreationLevel}` : "objects"}
-          x={menu.x}
-          y={menu.y}
-          label={landmarkCreationKind
-            ? `Name ${landmarkKindLabel(landmarkCreationKind)}`
-            : groupCreationLevel
-              ? `Name ${groupLevelLabel(groupCreationLevel)}`
-              : "Create map object"}
-          onClose={closeMenu}
-          content={{
-            kind: "canvas",
-            landmarkCreationKind,
-            groupCreationLevel,
-            informalNotePending,
-            informalNoteError,
-            onCreateLandmark: submitLandmarkCreation,
-            onCreateGroup: createGroup,
-            onBeginLandmarkCreation: beginLandmarkCreation,
-            onBeginGroupCreation: beginGroupCreation,
-            onBackFromLandmarkCreation: () => {
+      {menu && (
+        <Suspense fallback={null}>
+          <LazyDeferredAtlasMenus
+            menu={menu}
+            landmarkCreationKind={landmarkCreationKind}
+            groupCreationLevel={groupCreationLevel}
+            informalNotePending={informalNotePending}
+            informalNoteError={informalNoteError}
+            contextLandmark={contextLandmark}
+            contextLandmarkNode={contextLandmarkNode}
+            contextGroup={contextGroup}
+            selectedConnection={selectedConnection}
+            copiedColor={copiedColor}
+            panel={menuPanel}
+            onPanelChange={setMenuPanel}
+            onClose={closeMenu}
+            onBackFromLandmarkCreation={() => {
               landmarkCreationAttemptRef.current += 1;
               setLandmarkCreationKind(undefined);
-            },
-            onBackFromGroupCreation: () => {
+            }}
+            onBackFromGroupCreation={() => {
               landmarkCreationAttemptRef.current += 1;
               setGroupCreationLevel(undefined);
-            },
-            onCancel: closeMenu,
-          }}
-        />
-      )}
-
-      {menu?.kind === "landmark" && contextLandmark && contextLandmarkNode && (
-        <DeferredContextMenu
-          x={menu.x}
-          y={menu.y}
-          label={`Edit ${contextLandmark.title}`}
-          onClose={() => setMenu(undefined)}
-          content={{
-            kind: "landmark",
-            landmark: contextLandmark,
-            shape: contextLandmarkNode.data.shape,
-            contentMode: contextLandmarkNode.data.contentMode,
-            formulaIndex: contextLandmarkNode.data.formulaIndex,
-            formulaMarkdown: contextLandmarkNode.data.previewMarkdown ?? contextLandmark.markdown,
-            width: contextLandmarkNode.width ?? LANDMARK_WIDTH,
-            height: contextLandmarkNode.height ?? LANDMARK_HEIGHT,
-            color: contextLandmarkNode.data.color,
-            copiedColor,
-            panel: landmarkPanel,
-            onPanelChange: setMenuPanel,
-            onKindChange: (kind, shape) => {
-                onKindChange(contextLandmark.id, kind);
-                changeLandmarkAppearance(contextLandmark.id, { shape });
-            },
-            onAppearanceChange: (patch) => changeLandmarkAppearance(contextLandmark.id, patch),
-            onContentModeChange: (contentMode) => {
-              const compact = (contextLandmarkNode.width ?? LANDMARK_WIDTH) <= LANDMARK_WIDTH &&
-                (contextLandmarkNode.height ?? LANDMARK_HEIGHT) <= LANDMARK_HEIGHT;
-              changeLandmarkAppearance(contextLandmark.id, {
-                contentMode,
-                ...(contentMode !== "title" && compact ? { width: 336, height: 196 } : {}),
-              });
-            },
-            onSizeChange: ({ width, height }) => changeLandmarkAppearance(contextLandmark.id, {
-              width: Math.max(112, snap(width)),
-              height: Math.max(56, snap(height)),
-            }),
-            onCopyColor: () => setCopiedColor(contextLandmarkNode.data.color),
-            onRemove: onRemoveCanvasObjects ? () => {
-              if (!deleteSelectedCanvasObjects()) {
-                onRemoveCanvasObjects({
-                  landmarkIds: [contextLandmark.id],
-                  customGroupIds: [],
-                  connectionIds: [],
-                });
-                setMenu(undefined);
-              }
-            } : undefined,
-          }}
-        />
-      )}
-
-      {menu?.kind === "group" && contextGroup && (
-        <DeferredContextMenu
-          x={menu.x}
-          y={menu.y}
-          label={`Edit ${contextGroup.region.title}`}
-          onClose={() => setMenu(undefined)}
-          content={{
-            kind: "group",
-            group: {
-              title: contextGroup.region.title,
-              variant: contextGroup.variant,
-              level: contextGroup.level,
-              shape: contextGroup.shape,
-              titlePosition: contextGroup.titlePosition,
-              titleFontSize: contextGroup.titleFontSize,
-              borderStyle: contextGroup.borderStyle,
-              fillOpacity: contextGroup.fillOpacity,
-              borderWeight: contextGroup.borderWeight,
-              color: contextGroup.color,
-            },
-            copiedColor,
-            panel: groupPanel,
-            onPanelChange: setMenuPanel,
-            onTitleCommit: (title) => changeGroupAppearance(contextGroup.region.id, {
-              title: title.trim() || `Untitled ${contextGroup.level}`,
-            }),
-            onLevelChange: (level) => changeGroupLevel(contextGroup.region.id, level),
-            onAppearanceChange: (patch) => changeGroupAppearance(contextGroup.region.id, patch),
-            onTitleFontSizePreview: (titleFontSize) => flowRef.current?.updateNode?.(
-                contextGroup.nodeId,
-                (node) => isRegionNode(node)
-                  ? { data: { ...node.data, titleFontSize } }
-                  : {},
-            ),
-            onFillOpacityPreview: (fillOpacity) => setGroupSurfacePreview({
-              regionId: contextGroup.region.id,
+            }}
+            onCreateLandmark={submitLandmarkCreation}
+            onCreateGroup={createGroup}
+            onBeginLandmarkCreation={beginLandmarkCreation}
+            onBeginGroupCreation={beginGroupCreation}
+            onLandmarkKindChange={onKindChange}
+            onLandmarkAppearanceChange={changeLandmarkAppearance}
+            onGroupLevelChange={changeGroupLevel}
+            onGroupAppearanceChange={changeGroupAppearance}
+            onGroupTitleFontSizePreview={(nodeId, titleFontSize) => flowRef.current?.updateNode?.(
+              nodeId,
+              (node) => isRegionNode(node)
+                ? { data: { ...node.data, titleFontSize } }
+                : {},
+            )}
+            onGroupFillOpacityPreview={(regionId, fillOpacity) => setGroupSurfacePreview({
+              regionId,
               fillOpacity,
-            }),
-            onFillOpacityCommit: (fillOpacity) => {
+            })}
+            onGroupFillOpacityCommit={(regionId, fillOpacity) => {
               setGroupSurfacePreview(undefined);
-              changeGroupAppearance(contextGroup.region.id, { fillOpacity });
-            },
-            onCopyColor: () => setCopiedColor(contextGroup.color),
-            onDelete: contextGroup.variant === "custom" ? () => {
-              if (!deleteSelectedCanvasObjects()) deleteCustomGroup(contextGroup.region.id);
-            } : undefined,
-          }}
-        />
+              changeGroupAppearance(regionId, { fillOpacity });
+            }}
+            onCopyColor={setCopiedColor}
+            onDeleteSelected={deleteSelectedCanvasObjects}
+            onRemoveLandmark={onRemoveCanvasObjects ? (landmarkId) => {
+              onRemoveCanvasObjects({
+                landmarkIds: [landmarkId],
+                customGroupIds: [],
+                connectionIds: [],
+              });
+              setMenu(undefined);
+            } : undefined}
+            onDeleteCustomGroup={deleteCustomGroup}
+            onConnectionChange={updateConnection}
+            onDeleteConnection={deleteConnection}
+          />
+        </Suspense>
       )}
-
-      {menu?.kind === "connection" && selectedConnection && (
-        <DeferredContextMenu
-          x={menu.x}
-          y={menu.y}
-          label="Edit connection"
-          onClose={() => setMenu(undefined)}
-          content={{
-            kind: "connection",
-            connection: selectedConnection,
-            copiedColor,
-            panel: connectionPanel,
-            onPanelChange: setMenuPanel,
-            onChange: (patch) => updateConnection(selectedConnection.id, patch),
-            onCopyColor: () => setCopiedColor(selectedConnection.color),
-            onDelete: () => {
-              if (!deleteSelectedCanvasObjects()) deleteConnection(selectedConnection.id);
-            },
-          }}
-        />
-      )}
-      </Suspense>
     </div>
   );
 }

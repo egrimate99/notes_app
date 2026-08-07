@@ -209,7 +209,7 @@ function LandmarkNodeComponent({
     event.stopPropagation();
     const additive = event.ctrlKey || event.metaKey || event.shiftKey;
     const removeFromSelectionOnClick = additive && selected;
-    if (!removeFromSelectionOnClick) {
+    if (!selected) {
       data.onRequestSelection(landmark.id, additive ? "add" : "replace");
     }
     const point = pointWithinFrame(event);
@@ -373,7 +373,7 @@ function LandmarkNodeComponent({
           pointerId: event.pointerId,
           removeOnRelease: additive && selected,
         };
-        if (!(additive && selected)) {
+        if (!selected) {
           data.onRequestSelection(id, additive ? "add" : "replace");
         }
       }}

@@ -109,7 +109,7 @@ const groupToolTabs = [
   { id: "color", label: "Colour", icon: Palette },
 ] as const;
 
-const subjectGroupToolTabs = groupToolTabs.filter(({ id }) => id !== "color");
+const subjectGroupToolTabs = groupToolTabs.filter(({ id }) => id !== "color" && id !== "shape");
 
 const groupLevelOptions = [
   { value: "subject", label: "Subject", icon: Scan },
@@ -453,7 +453,7 @@ export default function DeferredAtlasMenuContent(props: DeferredAtlasMenuContent
   }
 
   if (props.kind === "group") {
-    const panel = props.group.level === "subject" && props.panel === "color"
+    const panel = props.group.level === "subject" && (props.panel === "color" || props.panel === "shape")
       ? "level"
       : props.panel;
     return (

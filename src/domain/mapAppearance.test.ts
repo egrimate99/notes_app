@@ -135,6 +135,9 @@ describe("mapAppearance", () => {
     const parallelogram = objectShapePortAnchors("parallelogram", 196, 84);
     expect(parallelogram.left.x).toBeGreaterThan(rectangle.left.x);
     expect(parallelogram.right.x).toBeLessThan(rectangle.right.x);
+    expect(parallelogram.top.x).toBeGreaterThan(50);
+    expect(parallelogram.bottom.x).toBeLessThan(50);
+    expect(parallelogram.top.x + parallelogram.bottom.x).toBeCloseTo(100, 10);
   });
 
   it("keeps every title anchor on the shared shape geometry", () => {

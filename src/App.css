@@ -386,11 +386,26 @@ html[data-panel-resizing] iframe {
 /* Note pane */
 #note-sidebar {
   grid-column: 3;
+  position: relative;
+  z-index: 2;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-left: 0;
+  border-left: 1px solid var(--ui-border-soft);
   background: var(--ui-surface);
+  box-shadow: -12px 0 30px rgba(29, 38, 48, .08);
+  animation: note-sidebar-enter 150ms cubic-bezier(.2, .72, .25, 1) both;
+}
+
+@keyframes note-sidebar-enter {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 #note-sidebar > .inspector-panel {
@@ -643,11 +658,15 @@ html[data-panel-resizing] iframe {
   pointer-events: none !important;
 }
 
-/* At overview scale a resize contour can be wider on screen than the object
-   it surrounds. Reserve that scale for selecting/moving/navigating instead of
-   letting an invisible resize band consume every click. */
-.atlas-graph.is-overview :is(.landmark-node__resize-target, .region-frame__hit-target) {
+/* Compact landmarks reserve overview scale for moving and navigation. Group
+   boundaries remain active: their exact silhouette is the only shape-aware
+   selection and resize surface, and RegionFrameNode keeps it screen-sized. */
+.atlas-graph.is-overview .landmark-node__resize-target {
   pointer-events: none !important;
+}
+
+.atlas-graph.is-overview .region-frame__hit-target {
+  pointer-events: stroke !important;
 }
 
 .canvas-nav {
@@ -1379,7 +1398,6 @@ html[data-panel-resizing] iframe {
 }
 
 .region-frame__subject-field,
-.region-frame__subject-contour,
 .region-frame__subgroup-field {
   fill: none;
   stroke: var(--group-color, #565e67);
@@ -1389,40 +1407,15 @@ html[data-panel-resizing] iframe {
 .region-frame__subject-field {
   stroke-width: calc(var(--region-stroke-width) * 4);
   stroke: var(--ui-border-strong);
-  stroke-opacity: .22;
-}
-
-/* Subject identity is carried across the territory, not by a small badge.
-   The marks are neutral, widely spaced, and deliberately below ten-percent
-   ink so mathematical landmarks remain the visual foreground. */
-.region-frame__subject-texture {
-  stroke: none;
-  pointer-events: none;
-}
-
-.region-frame__subject-texture-mark {
-  fill: none;
-  stroke: var(--ui-ink-secondary);
-  stroke-opacity: .085;
-  stroke-width: .72;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  pointer-events: none;
-}
-
-.region-frame__subject-contour {
-  stroke-width: max(.7, calc(var(--region-stroke-width) * .55));
-  stroke: var(--ui-ink-muted);
-  stroke-dasharray: 1 8;
-  stroke-linecap: round;
-  opacity: .72;
+  stroke-opacity: .08;
 }
 
 .region-frame--level-subject .region-frame__shape {
   fill: none;
   fill-opacity: 0;
   stroke: var(--ui-ink-secondary);
-  stroke-opacity: .92;
+  stroke-width: 2.25;
+  stroke-opacity: .58;
 }
 
 .region-frame__subgroup-field {
@@ -1652,12 +1645,18 @@ html[data-panel-resizing] iframe {
 }
 
 .region-title-toolbar--subject .region-frame__titlebar {
-  min-height: 48px;
-  gap: 0;
-  padding: 9px 17px 10px;
-  border-top: 1px solid var(--ui-ink-secondary);
-  border-bottom: 1px solid var(--ui-border-strong);
-  background: rgba(255, 255, 255, .94);
+  min-height: 78px;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 15px;
+  padding: 11px 24px 12px 11px;
+  border: 1px solid color-mix(in srgb, var(--ui-border-strong) 58%, var(--ui-border));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--canvas) 98%, var(--ui-chrome));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .76),
+    0 5px 16px rgba(24, 34, 41, .13),
+    0 1px 2px rgba(24, 34, 41, .1);
+  transition: border-color 100ms ease-out, box-shadow 100ms ease-out;
 }
 
 .region-title-toolbar--subject .region-frame__title-frame {
@@ -1666,11 +1665,60 @@ html[data-panel-resizing] iframe {
 
 .region-title-toolbar--subject .region-frame__title-text {
   font-family: var(--font-ui);
-  font-weight: 610;
-  line-height: 1.12;
-  letter-spacing: .115em;
-  text-transform: uppercase;
-  color: var(--ui-ink-secondary);
+  font-weight: 670;
+  line-height: 1.08;
+  letter-spacing: -.015em;
+  text-transform: none;
+  color: var(--ui-ink);
+}
+
+.region-frame__subject-icon {
+  position: relative;
+  z-index: 1;
+  width: 54px;
+  height: 54px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--ui-border-strong) 64%, var(--ui-border));
+  border-radius: 14px;
+  background: linear-gradient(145deg, var(--ui-chrome-raised), var(--ui-active));
+  color: color-mix(in srgb, var(--ui-ink-secondary) 82%, var(--ui-ink));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .9),
+    0 2px 5px rgba(30, 42, 50, .1);
+}
+
+.region-frame__subject-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.region-title-toolbar--subject .region-frame__titlebar[data-title-position="top-right"],
+.region-title-toolbar--subject .region-frame__titlebar[data-title-position="middle-right"],
+.region-title-toolbar--subject .region-frame__titlebar[data-title-position="bottom-right"] {
+  grid-template-columns: minmax(0, 1fr) 54px;
+  padding-right: 11px;
+  padding-left: 22px;
+}
+
+.region-title-toolbar--subject .region-frame__titlebar[data-title-position="top-right"] .region-frame__subject-icon,
+.region-title-toolbar--subject .region-frame__titlebar[data-title-position="middle-right"] .region-frame__subject-icon,
+.region-title-toolbar--subject .region-frame__titlebar[data-title-position="bottom-right"] .region-frame__subject-icon {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.region-title-toolbar--subject .region-frame__titlebar:hover {
+  border-color: var(--ui-ink-secondary);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .82),
+    0 7px 20px rgba(24, 34, 41, .16),
+    0 2px 4px rgba(24, 34, 41, .11);
+}
+
+.region-frame.is-selected .region-title-toolbar--subject .region-frame__titlebar {
+  border-color: var(--ui-ink);
 }
 
 .region-title-toolbar--group .region-frame__titlebar {

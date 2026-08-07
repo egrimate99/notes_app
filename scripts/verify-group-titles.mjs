@@ -180,11 +180,10 @@ try {
   );
 
   const hideFile = page.getByRole("button", { name: "Hide file sidebar" });
-  const hideNote = page.getByRole("button", { name: "Hide note sidebar" });
+  const hideNote = page.getByRole("button", { name: "Close note sidebar" });
   if (await hideFile.count()) await hideFile.click();
   if (await hideNote.count()) await hideNote.click();
   await page.getByRole("button", { name: "Show file sidebar" }).waitFor();
-  await page.getByRole("button", { name: "Show note sidebar" }).waitFor();
   await page.waitForTimeout(180);
 
   const titleMetrics = await page.evaluate(() => {

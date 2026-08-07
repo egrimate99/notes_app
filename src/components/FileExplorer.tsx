@@ -62,6 +62,7 @@ interface FileExplorerProps {
   nodes: readonly ContentTreeNode[];
   selectedContentPath?: string;
   onSelectFile: (contentPath: string) => void;
+  onClearActiveSelection?: () => void;
   actions?: FileExplorerActions;
   label?: string;
   className?: string;
@@ -297,6 +298,7 @@ export const FileExplorer = memo(function FileExplorer({
   nodes,
   selectedContentPath,
   onSelectFile,
+  onClearActiveSelection,
   actions,
   label = "Files",
   className = "",
@@ -343,6 +345,7 @@ export const FileExplorer = memo(function FileExplorer({
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const explorerRef = useRef<HTMLElement>(null);
   const pendingRowFocusRef = useRef<string | null | undefined>(undefined);
+  const locallyClearedActiveSelectionRef = useRef(false);
 
   useEffect(() => {
     if (!selectedAncestors.length) return;
@@ -365,13 +368,34 @@ export const FileExplorer = memo(function FileExplorer({
     setSelectedPaths(stable);
   }, []);
 
+  const clearActiveSelectionFromExplorer = useCallback(() => {
+    if (!selectedContentPath || !onClearActiveSelection) return;
+    // App will clear selectedContentPath in response. Preserve the explorer's
+    // newly authored local selection (for example, a selected directory)
+    // instead of treating that parent update as an external reset.
+    locallyClearedActiveSelectionRef.current = true;
+    onClearActiveSelection();
+  }, [onClearActiveSelection, selectedContentPath]);
+
+  const reconcileActiveDocumentSelection = useCallback((next: ReadonlySet<string>) => {
+    if (!selectedContentPath) return;
+    if (!selectedPath || !next.has(selectedPath)) clearActiveSelectionFromExplorer();
+  }, [clearActiveSelectionFromExplorer, selectedContentPath, selectedPath]);
+
   useEffect(() => {
     if (!selectedPath) {
+      if (!selectedContentPath && locallyClearedActiveSelectionRef.current) {
+        locallyClearedActiveSelectionRef.current = false;
+        return;
+      }
       setActivePath(undefined);
       if (selectedPathsRef.current.size) replaceSelection(new Set());
       selectionAnchorRef.current = undefined;
       return;
     }
+    // A clear followed by a direct note switch can be batched into one parent
+    // render. Never let that old clear suppress a later genuine deselection.
+    locallyClearedActiveSelectionRef.current = false;
     setFocusedPath(selectedPath);
     setActivePath(selectedPath);
     const locallyOpened = locallyOpenedPathRef.current === selectedPath;
@@ -379,7 +403,7 @@ export const FileExplorer = memo(function FileExplorer({
     if (locallyOpened) return;
     selectionAnchorRef.current = selectedPath;
     replaceSelection(new Set([selectedPath]));
-  }, [replaceSelection, selectedPath]);
+  }, [replaceSelection, selectedContentPath, selectedPath]);
 
   useEffect(() => {
     if (!editState) return;
@@ -594,7 +618,9 @@ export const FileExplorer = memo(function FileExplorer({
         pendingRowFocusRef.current = path;
         setActivePath(path);
         selectionAnchorRef.current = path;
-        replaceSelection(new Set([path]));
+        const next = new Set([path]);
+        replaceSelection(next);
+        reconcileActiveDocumentSelection(next);
       } else {
         const from = editState.node.path;
         const expectedPath = joinContentPath(
@@ -623,7 +649,7 @@ export const FileExplorer = memo(function FileExplorer({
     } finally {
       setBusy(false);
     }
-  }, [actions, busy, editState, editValue, replaceSelection, selectedPath]);
+  }, [actions, busy, editState, editValue, reconcileActiveDocumentSelection, replaceSelection, selectedPath]);
 
   const confirmDelete = useCallback(async () => {
     if (!deleteTargets.length || !actions || busy) return;
@@ -724,10 +750,14 @@ export const FileExplorer = memo(function FileExplorer({
     if (node) {
       setFocusedPath(node.path);
       setActivePath(node.path);
-      if (!selectedPathsRef.current.has(node.path)) {
+      const nextSelection = selectedPathsRef.current.has(node.path)
+        ? selectedPathsRef.current
+        : new Set([node.path]);
+      if (nextSelection !== selectedPathsRef.current) {
         selectionAnchorRef.current = node.path;
-        replaceSelection(new Set([node.path]));
+        replaceSelection(nextSelection);
       }
+      reconcileActiveDocumentSelection(nextSelection);
     }
     setContextMenu({
       x: Math.max(8, Math.min(x, window.innerWidth - 220)),
@@ -735,7 +765,7 @@ export const FileExplorer = memo(function FileExplorer({
       node,
       depth,
     });
-  }, [actions, replaceSelection]);
+  }, [actions, reconcileActiveDocumentSelection, replaceSelection]);
 
   const activateFile = useCallback((node: ContentTreeNode) => {
     if (node.type !== "file") return;
@@ -745,7 +775,7 @@ export const FileExplorer = memo(function FileExplorer({
 
   const selectVisibleRange = useCallback((targetPath: string, additive: boolean) => {
     const targetIndex = visibleIndexByPath.get(targetPath);
-    if (targetIndex === undefined) return;
+    if (targetIndex === undefined) return new Set<string>();
     const anchorPath = selectionAnchorRef.current;
     const anchorIndex = anchorPath ? visibleIndexByPath.get(anchorPath) : undefined;
     const resolvedAnchorIndex = anchorIndex ?? targetIndex;
@@ -758,6 +788,7 @@ export const FileExplorer = memo(function FileExplorer({
       if (entry) next.add(entry.node.path);
     }
     replaceSelection(next);
+    return next;
   }, [replaceSelection, visibleIndexByPath, visibleNodes]);
 
   const selectEntry = useCallback((
@@ -767,7 +798,8 @@ export const FileExplorer = memo(function FileExplorer({
     const { node } = entry;
     let remainsSelected = true;
     if (options.range) {
-      selectVisibleRange(node.path, options.additive);
+      const next = selectVisibleRange(node.path, options.additive);
+      reconcileActiveDocumentSelection(next);
     } else if (options.additive) {
       const next = new Set(selectedPathsRef.current);
       if (next.has(node.path)) {
@@ -778,14 +810,19 @@ export const FileExplorer = memo(function FileExplorer({
       }
       selectionAnchorRef.current = node.path;
       replaceSelection(next);
+      reconcileActiveDocumentSelection(next);
     } else {
       selectionAnchorRef.current = node.path;
-      replaceSelection(new Set([node.path]));
+      const next = new Set([node.path]);
+      replaceSelection(next);
+      if (node.type === "directory" || options.activate === false) {
+        reconcileActiveDocumentSelection(next);
+      }
     }
     setFocusedPath(node.path);
     setActivePath(node.path);
     if (options.activate !== false && remainsSelected) activateFile(node);
-  }, [activateFile, replaceSelection, selectVisibleRange]);
+  }, [activateFile, reconcileActiveDocumentSelection, replaceSelection, selectVisibleRange]);
 
   const beginContentDrag = useCallback((
     event: DragEvent<HTMLButtonElement>,
@@ -795,10 +832,12 @@ export const FileExplorer = memo(function FileExplorer({
     const selectedForDrag = currentSelection.has(node.path)
       ? [...currentSelection]
       : [node.path];
+    const nextSelection = new Set(selectedForDrag);
     if (!currentSelection.has(node.path)) {
       selectionAnchorRef.current = node.path;
-      replaceSelection(new Set([node.path]));
+      replaceSelection(nextSelection);
     }
+    reconcileActiveDocumentSelection(nextSelection);
     const roots = selectionMoveRoots(selectedForDrag);
     const draggedNotes = collectNoteFileDragItems(nodes, roots);
     draggingPathsRef.current = roots;
@@ -825,7 +864,7 @@ export const FileExplorer = memo(function FileExplorer({
       event.dataTransfer.setDragImage(preview, 14, 14);
       window.setTimeout(() => preview.remove(), 0);
     }
-  }, [nodes, replaceSelection]);
+  }, [nodes, reconcileActiveDocumentSelection, replaceSelection]);
 
   const dragPaths = useCallback((dataTransfer: DataTransfer) => {
     // The in-memory session is authoritative for same-window explorer drags.
@@ -1043,7 +1082,9 @@ export const FileExplorer = memo(function FileExplorer({
       }
       if (additive && event.key.toLocaleLowerCase() === "a") {
         event.preventDefault();
-        replaceSelection(new Set(visibleNodes.map(({ node }) => node.path)));
+        const next = new Set(visibleNodes.map(({ node }) => node.path));
+        replaceSelection(next);
+        reconcileActiveDocumentSelection(next);
         selectionAnchorRef.current = entry.node.path;
         return;
       }
@@ -1066,6 +1107,8 @@ export const FileExplorer = memo(function FileExplorer({
         event.preventDefault();
         replaceSelection(new Set());
         selectionAnchorRef.current = undefined;
+        setActivePath(undefined);
+        clearActiveSelectionFromExplorer();
         return;
       }
 
@@ -1125,9 +1168,11 @@ export const FileExplorer = memo(function FileExplorer({
       activateFile,
       beginCreate,
       beginRename,
+      clearActiveSelectionFromExplorer,
       expandedPaths,
       focusRow,
       replaceSelection,
+      reconcileActiveDocumentSelection,
       selectEntry,
       toggleDirectory,
       targetsForSelection,
@@ -1279,6 +1324,7 @@ export const FileExplorer = memo(function FileExplorer({
           replaceSelection(new Set());
           selectionAnchorRef.current = undefined;
           setActivePath(undefined);
+          clearActiveSelectionFromExplorer();
         }}
         onDragOver={(event) => {
           if (event.target === event.currentTarget) {

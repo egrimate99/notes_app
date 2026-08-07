@@ -65,8 +65,14 @@ const budgets = [
   // aggregate initial-load guard unchanged: that remains the meaningful
   // transport constraint. The narrow chunk allowance also covers the saved
   // formula-choice routing and the tiny async batch-drop dispatch; the
-  // compiled picker, parser, packing, and collision work remain deferred.
-  { chunk: graph, maxRaw: 255_000, maxGzip: 82_000 },
+  // compiled picker, parser, packing, and collision work remain deferred. The
+  // subject title icons and the shared mixed-selection drag runtime fit inside
+  // this narrow local allowance. Magnetic calculations, guide rendering, and
+  // right-click menu orchestration remain deferred; only their small gesture
+  // facade is resident here. The unchanged aggregate guard below remains the
+  // tighter constraint and caps initial interaction at 570 kB raw / 175 kB
+  // gzip.
+  { chunk: graph, maxRaw: 266_000, maxGzip: 86_000 },
   // Full Obsidian-note parity includes GFM tables/tasks, chunk-safe footnotes,
   // and glyph/row-aware formula hit mapping. The renderer remains deferred;
   // the narrow headroom prevents this correctness helper becoming a broad

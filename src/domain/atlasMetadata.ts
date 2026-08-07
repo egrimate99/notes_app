@@ -3,6 +3,11 @@
  * browser or Node dependencies so the same validator guards both sides of the
  * local API boundary.
  */
+import {
+  isSubjectFrameStyle,
+  type SubjectFrameStyle,
+} from "./subjectFrameStyle";
+
 export const ATLAS_METADATA_SCHEMA_VERSION = 1 as const;
 export const ATLAS_MAP_SCHEMA_VERSION = 1 as const;
 export const DEFAULT_ATLAS_SNAPSHOT_KEY = "math-atlas";
@@ -67,6 +72,7 @@ export type AtlasConnectionDirection = (typeof connectionDirections)[number];
 export type AtlasConnectionLineStyle = (typeof connectionLineStyles)[number];
 export type AtlasConnectionPathStyle = (typeof connectionPathStyles)[number];
 export type AtlasLandmarkContentMode = (typeof landmarkContentModes)[number];
+export type AtlasSubjectFrameStyle = SubjectFrameStyle;
 
 export interface AtlasPlacement {
   landmarkId: string;
@@ -138,6 +144,7 @@ export interface AtlasCustomGroup {
   fillOpacity?: number;
   titlePosition?: AtlasGroupTitlePosition;
   titleFontSize?: number;
+  subjectFrameStyle?: AtlasSubjectFrameStyle;
 }
 
 export interface AtlasConnectionCustomization {
@@ -471,7 +478,7 @@ function parseCustomLandmark(
 }
 
 function parseCustomGroup(value: unknown, path: string, issues: string[]): AtlasCustomGroup | undefined {
-  const allowed = ["id", "title", "subjectId", "parentId", "regionId", "level", "x", "y", "width", "height", "color", "shape", "borderStyle", "borderWeight", "fillOpacity", "titlePosition", "titleFontSize"];
+  const allowed = ["id", "title", "subjectId", "parentId", "regionId", "level", "x", "y", "width", "height", "color", "shape", "borderStyle", "borderWeight", "fillOpacity", "titlePosition", "titleFontSize", "subjectFrameStyle"];
   if (!isRecord(value) || !objectKeysAre(value, allowed)) {
     issueAt(issues, path, "expected a custom group object");
     return undefined;
@@ -493,11 +500,14 @@ function parseCustomGroup(value: unknown, path: string, issues: string[]): Atlas
   const fillOpacity = value.fillOpacity === undefined ? undefined : safeGroupFillOpacity(value.fillOpacity);
   const titlePosition = value.titlePosition === undefined ? undefined : oneOf(value.titlePosition, titlePositions);
   const titleFontSize = value.titleFontSize === undefined ? undefined : safeGroupTitleFontSize(value.titleFontSize);
-  if (!id || !title || !subjectId || (value.parentId !== undefined && (!parentId || parentId === id)) || (value.regionId !== undefined && !regionId) || x === undefined || y === undefined || !width || !height || !color || !shape || (value.level !== undefined && !level) || (value.borderStyle !== undefined && !borderStyle) || (value.borderWeight !== undefined && !borderWeight) || (value.fillOpacity !== undefined && fillOpacity === undefined) || (value.titlePosition !== undefined && !titlePosition) || (value.titleFontSize !== undefined && titleFontSize === undefined)) {
+  const subjectFrameStyle = value.subjectFrameStyle === undefined || !isSubjectFrameStyle(value.subjectFrameStyle)
+    ? undefined
+    : value.subjectFrameStyle;
+  if (!id || !title || !subjectId || (value.parentId !== undefined && (!parentId || parentId === id)) || (value.regionId !== undefined && !regionId) || x === undefined || y === undefined || !width || !height || !color || !shape || (value.level !== undefined && !level) || (value.borderStyle !== undefined && !borderStyle) || (value.borderWeight !== undefined && !borderWeight) || (value.fillOpacity !== undefined && fillOpacity === undefined) || (value.titlePosition !== undefined && !titlePosition) || (value.titleFontSize !== undefined && titleFontSize === undefined) || (value.subjectFrameStyle !== undefined && !subjectFrameStyle)) {
     issueAt(issues, path, "missing or invalid required group field");
     return undefined;
   }
-  return { id, title, subjectId, ...(parentId ? { parentId } : {}), ...(regionId ? { regionId } : {}), ...(level ? { level } : {}), x, y, width, height, color, shape, ...(borderStyle ? { borderStyle } : {}), ...(borderWeight ? { borderWeight } : {}), ...(fillOpacity !== undefined ? { fillOpacity } : {}), ...(titlePosition ? { titlePosition } : {}), ...(titleFontSize !== undefined ? { titleFontSize } : {}) };
+  return { id, title, subjectId, ...(parentId ? { parentId } : {}), ...(regionId ? { regionId } : {}), ...(level ? { level } : {}), x, y, width, height, color, shape, ...(borderStyle ? { borderStyle } : {}), ...(borderWeight ? { borderWeight } : {}), ...(fillOpacity !== undefined ? { fillOpacity } : {}), ...(titlePosition ? { titlePosition } : {}), ...(titleFontSize !== undefined ? { titleFontSize } : {}), ...(subjectFrameStyle ? { subjectFrameStyle } : {}) };
 }
 
 function parseConnection(

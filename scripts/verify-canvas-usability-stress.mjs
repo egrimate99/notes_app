@@ -36,6 +36,19 @@ const formulaPickerScreenshot = path.join(
   screenshotsDir,
   "usability-stress-landmark-formula-picker.png",
 );
+const groupBoundaryZoomScreenshot = path.join(
+  screenshotsDir,
+  "usability-stress-group-boundary-zoom.png",
+);
+const mixedSelectionDragScreenshot = path.join(
+  screenshotsDir,
+  "usability-stress-mixed-selection-drag.png",
+);
+const movementGuidesScreenshot = path.join(
+  screenshotsDir,
+  "usability-stress-movement-guides.png",
+);
+const alignmentConnectionId = "stress-alignment-arrow";
 
 const ids = {
   subject: "stress-subject",
@@ -238,7 +251,8 @@ const fixture = {
       height: 756,
       color: "#287348",
       shape: "rectangle",
-      borderStyle: "double",
+      borderStyle: "solid",
+      borderWeight: "regular",
       titlePosition: "top-left",
       titleFontSize: 30,
     },
@@ -292,7 +306,17 @@ const fixture = {
     },
   ],
   connectionOverrides: {},
-  customConnections: [],
+  customConnections: [{
+    id: alignmentConnectionId,
+    source: ids.a,
+    target: ids.c,
+    sourceHandle: "bottom",
+    targetHandle: "top",
+    direction: "forward",
+    lineStyle: "solid",
+    pathStyle: "smooth",
+    color: "#245cba",
+  }],
 };
 
 function assert(condition, message) {
@@ -418,6 +442,21 @@ async function objectScreenGeometry(page, testId) {
       resizing: wrapper.classList.contains("resizing"),
     };
   }, testId);
+}
+
+async function edgeScreenEndpoints(page, edgeId) {
+  return page.getByTestId(`rf__edge-${edgeId}`).locator(".react-flow__edge-path").evaluate((path) => {
+    const matrix = path.getScreenCTM();
+    if (!matrix) return undefined;
+    const screenPoint = (point) => {
+      const transformed = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+      return { x: transformed.x, y: transformed.y };
+    };
+    return {
+      source: screenPoint(path.getPointAtLength(0)),
+      target: screenPoint(path.getPointAtLength(path.getTotalLength())),
+    };
+  });
 }
 
 function expectedSnappedRightResize(original, pointerDelta, grid = 28) {
@@ -719,7 +758,7 @@ function groupTitle(page, id) {
 }
 
 async function hideSidebars(page) {
-  for (const name of ["Hide note sidebar", "Hide file sidebar"]) {
+  for (const name of ["Close note sidebar", "Hide file sidebar"]) {
     const button = page.getByRole("button", { name, exact: true });
     if (await button.count() && await button.isVisible()) await button.click();
   }
@@ -762,6 +801,28 @@ async function dragLocator(page, locator, deltaX, deltaY, steps = 8) {
   assert(bounds, "The drag target has no screen geometry.");
   const start = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
   await dragFrom(page, start, { x: start.x + deltaX, y: start.y + deltaY }, steps);
+}
+
+async function dragLocatorGridOnly(page, locator, deltaX, deltaY, steps = 8) {
+  await page.keyboard.down("Alt");
+  try {
+    await dragLocator(page, locator, deltaX, deltaY, steps);
+  } finally {
+    await page.keyboard.up("Alt");
+  }
+}
+
+async function beginLocatorDrag(page, locator) {
+  const bounds = await locator.boundingBox();
+  assert(bounds, "The drag target has no screen geometry.");
+  const start = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  return start;
+}
+
+async function moveOpenDrag(page, start, deltaX, deltaY, steps = 8) {
+  await page.mouse.move(start.x + deltaX, start.y + deltaY, { steps });
 }
 
 async function selectedStressObjects(page) {
@@ -1205,30 +1266,49 @@ try {
     } finally {
       await page.keyboard.up("Shift").catch(() => undefined);
       await page.keyboard.up("Control").catch(() => undefined);
+      await page.keyboard.up("Alt").catch(() => undefined);
       await page.mouse.up().catch(() => undefined);
     }
   };
 
   await scenario("nested landmark drag isolation", async () => {
     const before = await canvasState(page);
-    const textureDiagnostics = await group(page, ids.subject).evaluate((node) => {
-      const texture = node.querySelector(".region-frame__subject-texture");
+    const frameDiagnostics = await group(page, ids.subject).evaluate((node) => {
       const shape = node.querySelector(".region-frame__shape");
-      const mark = node.querySelector(".region-frame__subject-texture-mark");
+      const regionId = node.getAttribute("data-testid")?.replace(/^group-/, "");
+      const title = regionId ? document.querySelector(`[data-region-title="${regionId}"]`) : undefined;
+      const icon = title?.querySelector(".region-frame__subject-icon");
       return {
-        present: Boolean(texture),
-        texturePath: texture?.getAttribute("d"),
-        shapePath: shape?.getAttribute("d"),
-        pointerEvents: texture ? getComputedStyle(texture).pointerEvents : undefined,
-        strokeOpacity: mark ? Number.parseFloat(getComputedStyle(mark).strokeOpacity) : 1,
+        style: node.getAttribute("data-subject-frame-style"),
+        decorationCount: node.querySelectorAll(".region-frame__subject-frame, .region-frame__subject-texture, linearGradient, pattern").length,
+        fill: shape ? getComputedStyle(shape).fill : undefined,
+        fillOpacity: shape ? Number.parseFloat(getComputedStyle(shape).fillOpacity) : 1,
+        strokeOpacity: shape ? Number.parseFloat(getComputedStyle(shape).strokeOpacity) : 0,
+        strokeWidth: shape ? Number.parseFloat(getComputedStyle(shape).strokeWidth) : 0,
+        stroke: shape ? getComputedStyle(shape).stroke : undefined,
+        titleTreatment: title?.getAttribute("data-title-treatment"),
+        titleMinHeight: title ? Number.parseFloat(getComputedStyle(title).minHeight) : 0,
+        icon: icon?.getAttribute("data-subject-icon"),
+        iconWidth: icon ? Number.parseFloat(getComputedStyle(icon).width) : 0,
+        iconHeight: icon ? Number.parseFloat(getComputedStyle(icon).height) : 0,
+        iconSvg: Boolean(icon?.querySelector("svg")),
       };
     });
     assert(
-      textureDiagnostics.present &&
-        textureDiagnostics.texturePath === textureDiagnostics.shapePath &&
-        textureDiagnostics.pointerEvents === "none" &&
-        textureDiagnostics.strokeOpacity <= .1,
-      `Subject texture is not quiet, clipped, and non-interactive: ${JSON.stringify(textureDiagnostics)}.`,
+        frameDiagnostics.style === "double-rule" &&
+        frameDiagnostics.decorationCount === 0 &&
+        frameDiagnostics.fill === "none" &&
+        frameDiagnostics.fillOpacity === 0 &&
+        frameDiagnostics.stroke === "rgb(77, 85, 94)" &&
+        frameDiagnostics.strokeOpacity >= .5 &&
+        frameDiagnostics.strokeWidth >= 1.5 &&
+        frameDiagnostics.titleTreatment === "subject" &&
+        frameDiagnostics.titleMinHeight >= 78 &&
+        frameDiagnostics.icon === frameDiagnostics.style &&
+        frameDiagnostics.iconWidth === 54 &&
+        frameDiagnostics.iconHeight === 54 &&
+        frameDiagnostics.iconSvg,
+      `Subject cloud and icon title card do not match the neutral treatment: ${JSON.stringify(frameDiagnostics)}.`,
     );
     const subjectLandmarkBounds = await landmark(page, ids.d).boundingBox();
     assert(subjectLandmarkBounds, "The direct Subject landmark has no screen geometry.");
@@ -1244,11 +1324,11 @@ try {
     });
     assert(
       subjectLandmarkOwner.landmarkTestId === `landmark-${ids.d}` &&
-        !subjectLandmarkOwner.targetClass?.includes("region-frame__subject-texture"),
-      `Subject texture displaced its landmark from pointer ownership: ${JSON.stringify(subjectLandmarkOwner)}.`,
+        !subjectLandmarkOwner.targetClass?.includes("region-frame__shape"),
+      `Subject boundary displaced its landmark from pointer ownership: ${JSON.stringify(subjectLandmarkOwner)}.`,
     );
     await page.screenshot({ path: overviewScreenshot, fullPage: true });
-    await dragLocator(page, landmark(page, ids.a), 112, 56, 12);
+    await dragLocatorGridOnly(page, landmark(page, ids.a), 112, 56, 12);
     const after = await waitForPosition(
       page,
       "landmarks",
@@ -1271,6 +1351,7 @@ try {
       y: landmarkBounds.y + landmarkBounds.height / 2,
     };
     await page.mouse.move(landmarkStart.x, landmarkStart.y);
+    await page.keyboard.down("Alt");
     await page.mouse.down();
     await page.mouse.move(landmarkStart.x + 84, landmarkStart.y - 28, { steps: 12 });
     assertViewportStable(
@@ -1279,6 +1360,7 @@ try {
       "landmark pointer movement before release",
     );
     await page.mouse.up();
+    await page.keyboard.up("Alt");
     assertViewportStable(
       landmarkViewport,
       await viewportState(page),
@@ -1307,6 +1389,7 @@ try {
       y: titleBounds.y + titleBounds.height / 2,
     };
     await page.mouse.move(titleStart.x, titleStart.y);
+    await page.keyboard.down("Alt");
     await page.mouse.down();
     await page.mouse.move(titleStart.x + 56, titleStart.y + 28, { steps: 12 });
     assertViewportStable(
@@ -1315,6 +1398,7 @@ try {
       "group pointer movement before release",
     );
     await page.mouse.up();
+    await page.keyboard.up("Alt");
     assertViewportStable(
       groupViewport,
       await viewportState(page),
@@ -1337,7 +1421,7 @@ try {
 
   await scenario("title-only nested group drags", async () => {
     let before = await canvasState(page);
-    await dragLocator(page, groupTitle(page, ids.subgroup), 56, 28);
+    await dragLocatorGridOnly(page, groupTitle(page, ids.subgroup), 56, 28);
     let after = await waitForPosition(
       page,
       "groups",
@@ -1351,7 +1435,7 @@ try {
     assertUnmoved(before, after, "landmarks", [ids.c, ids.d]);
 
     before = clone(after);
-    await dragLocator(page, groupTitle(page, ids.group), -28, 56);
+    await dragLocatorGridOnly(page, groupTitle(page, ids.group), -28, 56);
     after = await waitForPosition(
       page,
       "groups",
@@ -1365,7 +1449,7 @@ try {
     assertUnmoved(before, after, "landmarks", [ids.d]);
 
     before = clone(after);
-    await dragLocator(page, groupTitle(page, ids.subject), 28, -28);
+    await dragLocatorGridOnly(page, groupTitle(page, ids.subject), 28, -28);
     after = await waitForPosition(
       page,
       "groups",
@@ -1377,19 +1461,51 @@ try {
     assertMoved(before, after, "landmarks", [ids.a, ids.b, ids.c, ids.d], 28, -28);
   });
 
-  await scenario("group border hit and selection", async () => {
+  await scenario("group border hit and selection across zoom levels", async () => {
     const before = await canvasState(page);
-    for (const id of [ids.subject, ids.group, ids.subgroup]) {
-      // Ten pixels off the painted centerline deliberately falls outside the
-      // former 14px-total corridor and proves the enlarged band is real.
-      const point = await expandedFrameBandPoint(page, `group-${id}`, "region-frame__hit-target", 10);
-      assert(
-        point,
-        `${id} exposed no clickable expanded border point: ${JSON.stringify(await frameHitDiagnostics(page, `group-${id}`))}.`,
-      );
-      await page.mouse.click(point.x, point.y);
-      await waitForSelection(page, [], [id]);
-    }
+    const zoomSamples = [];
+    const verifyCurrentZoom = async (label) => {
+      const viewport = await viewportState(page);
+      assert(viewport, `The canvas viewport disappeared before the ${label} boundary probe.`);
+      zoomSamples.push({ label, zoom: viewport.zoomX });
+      for (const id of [ids.subject, ids.group, ids.subgroup]) {
+        // Ten screen pixels off the painted centerline deliberately falls
+        // outside the old 14px-total corridor. Keeping this offset in screen
+        // space proves the practical boundary target survives every zoom tier,
+        // including overview mode where the path used to be disabled entirely.
+        const point = await expandedFrameBandPoint(
+          page,
+          `group-${id}`,
+          "region-frame__hit-target",
+          10,
+        );
+        assert(
+          point,
+          `${id} exposed no clickable boundary point during ${label} at zoom ${viewport.zoomX}: ${JSON.stringify(await frameHitDiagnostics(page, `group-${id}`))}.`,
+        );
+        await page.mouse.click(point.x, point.y);
+        await waitForSelection(page, [], [id]);
+      }
+    };
+
+    await verifyCurrentZoom("native zoom");
+    const midZoom = await zoomOutCanvas(page, 3);
+    assert(
+      midZoom.zoomX > .45 && midZoom.zoomX < .7,
+      `The mid-zoom boundary probe missed its useful range: ${JSON.stringify(midZoom)}.`,
+    );
+    await verifyCurrentZoom("mid zoom");
+    const farZoom = await zoomOutCanvas(page, 4);
+    assert(
+      farZoom.zoomX > .2 && farZoom.zoomX <= .32,
+      `The far-zoom boundary probe missed its useful range: ${JSON.stringify(farZoom)}.`,
+    );
+    await verifyCurrentZoom("far zoom");
+    assert(
+      zoomSamples[0].zoom > zoomSamples[1].zoom && zoomSamples[1].zoom > zoomSamples[2].zoom,
+      `The group boundary probes did not cover descending zoom levels: ${JSON.stringify(zoomSamples)}.`,
+    );
+    await page.screenshot({ path: groupBoundaryZoomScreenshot, fullPage: true });
     const after = await canvasState(page);
     assertUnmoved(before, after, "groups", [ids.subject, ids.group, ids.subgroup]);
     assertUnmoved(before, after, "landmarks", [ids.a, ids.b, ids.c, ids.d]);
@@ -1568,6 +1684,387 @@ try {
     await creationMenu.waitFor({ state: "detached" });
   });
 
+  await scenario("magnetic alignment guides, group centring, and precision bypass", async () => {
+    const before = await canvasState(page);
+
+    // Approach A's bottom port from just outside its acquisition radius. The
+    // two landmarks deliberately live in different nested groups: their authored
+    // arrow, not an unrelated frame, must own this alignment decision.
+    let start = await beginLocatorDrag(page, landmark(page, ids.c));
+    await moveOpenDrag(page, start, 146, 0, 14);
+    await waitFor(page, async () => {
+      const x = page.getByTestId("alignment-guide-x");
+      return await x.count() === 1;
+    }, "Peer alignment did not expose its live drafting guide.");
+    const [aGeometry, alignedGeometry] = await Promise.all([
+      objectScreenGeometry(page, `landmark-${ids.a}`),
+      objectScreenGeometry(page, `landmark-${ids.c}`),
+    ]);
+    assert(aGeometry && alignedGeometry, "Aligned landmarks lost their screen geometry.");
+    assert(
+      Math.abs(alignedGeometry.left - aGeometry.left) <= .8 &&
+        alignedGeometry.top > aGeometry.bottom + 80,
+      `Peer magnets did not align exactly: target=${JSON.stringify(aGeometry)}, moving=${JSON.stringify(alignedGeometry)}.`,
+    );
+    const peerGuide = page.getByTestId("alignment-guide-x");
+    assert(
+      await peerGuide.getAttribute("data-guide-targets") === ids.a,
+      "The vertical guide did not identify the aligned peer.",
+    );
+    assert(
+      await peerGuide.getAttribute("data-guide-kind") === "connection" &&
+        await peerGuide.getAttribute("data-moving-anchor") === "connection-port",
+      "The existing arrow did not own the exact port-alignment magnet.",
+    );
+    assert(
+      await page.locator("[data-guide-kind='containment']").count() === 0,
+      "An unrelated parent-frame guide appeared beside the active arrow alignment.",
+    );
+    const arrow = await edgeScreenEndpoints(page, alignmentConnectionId);
+    assert(
+      arrow && Math.abs(arrow.source.x - arrow.target.x) <= .65,
+      `The boxes aligned but their arrow remained bent: ${JSON.stringify(arrow)}.`,
+    );
+    const [sourcePortBounds, targetPortBounds] = await Promise.all([
+      landmark(page, ids.a).locator(".atlas-port--bottom").boundingBox(),
+      landmark(page, ids.c).locator(".atlas-port--top").boundingBox(),
+    ]);
+    assert(sourcePortBounds && targetPortBounds, "Aligned arrow ports disappeared during movement.");
+    const sourcePort = {
+      x: sourcePortBounds.x + sourcePortBounds.width / 2,
+      y: sourcePortBounds.y + sourcePortBounds.height / 2,
+    };
+    const targetPort = {
+      x: targetPortBounds.x + targetPortBounds.width / 2,
+      y: targetPortBounds.y + targetPortBounds.height / 2,
+    };
+    assert(
+      Math.abs(arrow.source.x - sourcePort.x) <= 1.5 &&
+        Math.abs(arrow.source.y - sourcePort.y) <= 1.5 &&
+        Math.abs(arrow.target.x - targetPort.x) <= 1.5 &&
+        Math.abs(arrow.target.y - targetPort.y) <= 1.5,
+      `The straight arrow did not terminate on its visible side dots: ${JSON.stringify({ arrow, sourcePort, targetPort })}.`,
+    );
+    const guidePointerEvents = await page.getByTestId("canvas-alignment-guides").evaluate((node) => (
+      getComputedStyle(node).pointerEvents
+    ));
+    assert(guidePointerEvents === "none", "Drafting guides can intercept canvas pointers.");
+    await page.screenshot({ path: movementGuidesScreenshot, fullPage: true });
+    await page.mouse.up();
+    await waitForPosition(page, "landmarks", ids.c, 420, 560);
+    const settledArrow = await edgeScreenEndpoints(page, alignmentConnectionId);
+    assert(
+      settledArrow && Math.abs(settledArrow.source.x - settledArrow.target.x) <= .65,
+      `The arrow lost exact alignment after release: ${JSON.stringify(settledArrow)}.`,
+    );
+    await waitFor(page, async () => (
+      await page.getByTestId("canvas-alignment-guides").count() === 0
+    ), "Drafting guides remained after pointer release.");
+
+    await page.keyboard.press("Control+z");
+    await waitForPosition(
+      page,
+      "landmarks",
+      ids.c,
+      before.landmarks[ids.c].x,
+      before.landmarks[ids.c].y,
+    );
+
+    // The subgroup's exact centre is half a dot column for this landmark.
+    // Smart centring is allowed to override the grid so the margins are truly
+    // equal rather than merely close.
+    start = await beginLocatorDrag(page, landmark(page, ids.c));
+    await moveOpenDrag(page, start, 243, -190, 14);
+    await waitFor(page, async () => {
+      const guides = page.locator("[data-guide-kind='containment']");
+      return await guides.count() === 2;
+    }, "Group centring did not expose two containment guides.");
+    const [subgroupGeometry, centredGeometry] = await Promise.all([
+      objectScreenGeometry(page, `group-${ids.subgroup}`),
+      objectScreenGeometry(page, `landmark-${ids.c}`),
+    ]);
+    assert(subgroupGeometry && centredGeometry, "Centred group geometry disappeared.");
+    const expectedCentre = {
+      left: subgroupGeometry.left + (subgroupGeometry.width - centredGeometry.width) / 2,
+      top: subgroupGeometry.top + (subgroupGeometry.height - centredGeometry.height) / 2,
+    };
+    assert(
+      Math.abs(centredGeometry.left - expectedCentre.left) <= .8 &&
+        Math.abs(centredGeometry.top - expectedCentre.top) <= .8,
+      `Group centre was approximate rather than exact: expected=${JSON.stringify(expectedCentre)}, actual=${JSON.stringify(centredGeometry)}.`,
+    );
+    await page.mouse.up();
+    await waitForPosition(page, "landmarks", ids.c, 518, 364);
+
+    await page.keyboard.press("Control+z");
+    await waitForPosition(
+      page,
+      "landmarks",
+      ids.c,
+      before.landmarks[ids.c].x,
+      before.landmarks[ids.c].y,
+    );
+
+    // Alt keeps ordinary dot-grid settling but suppresses every smart guide.
+    start = await beginLocatorDrag(page, landmark(page, ids.c));
+    await page.keyboard.down("Alt");
+    await moveOpenDrag(page, start, 243, -190, 14);
+    assert(
+      await page.getByTestId("canvas-alignment-guides").count() === 0,
+      "Alt precision bypass still displayed a smart guide.",
+    );
+    await page.mouse.up();
+    await page.keyboard.up("Alt");
+    await waitForPosition(page, "landmarks", ids.c, 532, 364);
+  });
+
+  await scenario("Shift locks movement to the dominant axis", async () => {
+    const before = await canvasState(page);
+    const start = await beginLocatorDrag(page, landmark(page, ids.c));
+    await page.keyboard.down("Shift");
+    await moveOpenDrag(page, start, 112, 84, 12);
+    await waitFor(page, async () => {
+      const guide = page.getByTestId("alignment-guide-y");
+      return await guide.count() === 1 &&
+        await guide.getAttribute("data-guide-targets") === "axis-lock";
+    }, "Shift did not expose the dominant-axis constraint.");
+    const live = await objectScreenGeometry(page, `landmark-${ids.c}`);
+    const original = before.landmarks[ids.c];
+    assert(live, "The axis-locked landmark disappeared during movement.");
+    const viewport = await viewportState(page);
+    assert(viewport, "The viewport disappeared during axis locking.");
+    const expectedTop = original.y * viewport.zoomY + viewport.y;
+    assert(
+      Math.abs(live.top - expectedTop) <= .8,
+      `Shift allowed perpendicular movement: expected top ${expectedTop}, actual ${live.top}.`,
+    );
+    await page.mouse.up();
+    await page.keyboard.up("Shift");
+    await waitFor(page, async () => {
+      const state = await canvasState(page);
+      return state.landmarks[ids.c]?.y === original.y ? state : false;
+    }, "The axis-locked drop changed its perpendicular coordinate.");
+  });
+
+  await scenario("mixed landmark and group selection drags as one unit", async () => {
+    await landmark(page, ids.a).click();
+    await landmark(page, ids.overlap).click({ modifiers: ["Control"] });
+    await hideSidebars(page);
+    const groupBoundary = await exposedFramePoint(
+      page,
+      `group-${ids.overlapGroup}`,
+      "region-frame__hit-target",
+    );
+    assert(groupBoundary, "The mixed-selection group exposes no clickable boundary point.");
+    await page.keyboard.down("Control");
+    await page.mouse.click(groupBoundary.x, groupBoundary.y);
+    await page.keyboard.up("Control");
+    await waitForSelection(page, [ids.a, ids.overlap], [ids.overlapGroup]);
+
+    const before = await canvasState(page);
+    const selectedBefore = [
+      before.landmarks[ids.a],
+      before.landmarks[ids.overlap],
+      before.groups[ids.overlapGroup],
+    ];
+    const relativeBefore = selectedBefore.slice(1).map((position) => ({
+      x: position.x - selectedBefore[0].x,
+      y: position.y - selectedBefore[0].y,
+    }));
+    const delta = { x: 84, y: -56 };
+
+    await dragLocatorGridOnly(page, landmark(page, ids.a), delta.x, delta.y, 12);
+    await waitForPosition(
+      page,
+      "landmarks",
+      ids.a,
+      before.landmarks[ids.a].x + delta.x,
+      before.landmarks[ids.a].y + delta.y,
+    );
+    let latestLandmarkPrimary;
+    try {
+      await waitFor(page, async () => {
+        const state = await canvasState(page);
+        latestLandmarkPrimary = state;
+        return state.landmarks[ids.overlap]?.x === before.landmarks[ids.overlap].x + delta.x &&
+          state.landmarks[ids.overlap]?.y === before.landmarks[ids.overlap].y + delta.y &&
+          state.groups[ids.overlapGroup]?.x === before.groups[ids.overlapGroup].x + delta.x &&
+          state.groups[ids.overlapGroup]?.y === before.groups[ids.overlapGroup].y + delta.y
+          ? state
+          : false;
+      }, "The mixed selection did not settle at one shared snapped drag delta.");
+    } catch (cause) {
+      throw new Error(
+        `The landmark-primary mixed drag diverged: before=${JSON.stringify(before)}, latest=${JSON.stringify(latestLandmarkPrimary)}.`,
+        { cause },
+      );
+    }
+    const after = await canvasState(page);
+
+    assertMoved(before, after, "landmarks", [ids.a, ids.overlap], delta.x, delta.y);
+    assertMoved(before, after, "groups", [ids.overlapGroup], delta.x, delta.y);
+    assertUnmoved(before, after, "landmarks", [
+      ids.b,
+      ids.c,
+      ids.d,
+      ids.corner,
+      ids.content,
+    ]);
+    assertUnmoved(before, after, "groups", [
+      ids.subject,
+      ids.group,
+      ids.subgroup,
+    ]);
+    const selectedAfter = [
+      after.landmarks[ids.a],
+      after.landmarks[ids.overlap],
+      after.groups[ids.overlapGroup],
+    ];
+    const relativeAfter = selectedAfter.slice(1).map((position) => ({
+      x: position.x - selectedAfter[0].x,
+      y: position.y - selectedAfter[0].y,
+    }));
+    assert(
+      JSON.stringify(relativeAfter) === JSON.stringify(relativeBefore),
+      `The mixed selection changed its internal layout: before=${JSON.stringify(relativeBefore)}, after=${JSON.stringify(relativeAfter)}.`,
+    );
+    await waitForSelection(page, [ids.a, ids.overlap], [ids.overlapGroup]);
+    await page.screenshot({ path: mixedSelectionDragScreenshot, fullPage: true });
+
+    await page.keyboard.press("Control+z");
+    await waitFor(page, async () => {
+      const state = await canvasState(page);
+      return state.landmarks[ids.a]?.x === before.landmarks[ids.a].x &&
+        state.landmarks[ids.a]?.y === before.landmarks[ids.a].y &&
+        state.landmarks[ids.overlap]?.x === before.landmarks[ids.overlap].x &&
+        state.landmarks[ids.overlap]?.y === before.landmarks[ids.overlap].y &&
+        state.groups[ids.overlapGroup]?.x === before.groups[ids.overlapGroup].x &&
+        state.groups[ids.overlapGroup]?.y === before.groups[ids.overlapGroup].y
+        ? state
+        : false;
+    }, "One Ctrl+Z did not restore the complete mixed-selection move.");
+    const undone = await canvasState(page);
+    assertUnmoved(before, undone, "landmarks", [
+      ids.a,
+      ids.b,
+      ids.c,
+      ids.d,
+      ids.corner,
+      ids.overlap,
+      ids.content,
+    ]);
+    assertUnmoved(before, undone, "groups", [
+      ids.subject,
+      ids.group,
+      ids.subgroup,
+      ids.overlapGroup,
+    ]);
+
+    // Exercise the custom group-title gesture as the primary owner too. It
+    // must use the same mixed-selection closure as a native landmark drag,
+    // including a selected landmark that is outside the group's hierarchy.
+    await page.keyboard.press("Escape");
+    await waitForSelection(page, []);
+    await landmark(page, ids.a).click();
+    await landmark(page, ids.b).click({ modifiers: ["Control"] });
+    await landmark(page, ids.c).click({ modifiers: ["Control"] });
+    await hideSidebars(page);
+    await groupTitle(page, ids.subgroup).click({ modifiers: ["Control"] });
+    await waitForSelection(page, [ids.a, ids.b, ids.c], [ids.subgroup]);
+
+    const beforeGroupPrimary = await canvasState(page);
+    const groupDelta = { x: -56, y: 56 };
+    await dragLocatorGridOnly(
+      page,
+      groupTitle(page, ids.subgroup),
+      groupDelta.x,
+      groupDelta.y,
+      12,
+    );
+    await waitForPosition(
+      page,
+      "groups",
+      ids.subgroup,
+      beforeGroupPrimary.groups[ids.subgroup].x + groupDelta.x,
+      beforeGroupPrimary.groups[ids.subgroup].y + groupDelta.y,
+    );
+    let latestGroupPrimary;
+    try {
+      await waitFor(page, async () => {
+        const state = await canvasState(page);
+        latestGroupPrimary = state;
+        return [ids.a, ids.b, ids.c].every((id) => (
+          state.landmarks[id]?.x === beforeGroupPrimary.landmarks[id].x + groupDelta.x &&
+          state.landmarks[id]?.y === beforeGroupPrimary.landmarks[id].y + groupDelta.y
+        )) ? state : false;
+      }, "Dragging a selected group title did not move every selected landmark by the same delta.");
+    } catch (cause) {
+      throw new Error(
+        `The group-primary mixed drag diverged: before=${JSON.stringify(beforeGroupPrimary)}, latest=${JSON.stringify(latestGroupPrimary)}.`,
+        { cause },
+      );
+    }
+    const afterGroupPrimary = await canvasState(page);
+    assertMoved(
+      beforeGroupPrimary,
+      afterGroupPrimary,
+      "landmarks",
+      [ids.a, ids.b, ids.c],
+      groupDelta.x,
+      groupDelta.y,
+    );
+    assertMoved(
+      beforeGroupPrimary,
+      afterGroupPrimary,
+      "groups",
+      [ids.subgroup],
+      groupDelta.x,
+      groupDelta.y,
+    );
+    assertUnmoved(beforeGroupPrimary, afterGroupPrimary, "landmarks", [
+      ids.d,
+      ids.corner,
+      ids.overlap,
+      ids.content,
+    ]);
+    assertUnmoved(beforeGroupPrimary, afterGroupPrimary, "groups", [
+      ids.subject,
+      ids.group,
+      ids.overlapGroup,
+    ]);
+    await waitForSelection(page, [ids.a, ids.b, ids.c], [ids.subgroup]);
+    await page.screenshot({ path: mixedSelectionDragScreenshot, fullPage: true });
+
+    await page.keyboard.press("Control+z");
+    await waitFor(page, async () => {
+      const state = await canvasState(page);
+      return [ids.a, ids.b, ids.c].every((id) => (
+        state.landmarks[id]?.x === beforeGroupPrimary.landmarks[id].x &&
+        state.landmarks[id]?.y === beforeGroupPrimary.landmarks[id].y
+      )) &&
+        state.groups[ids.subgroup]?.x === beforeGroupPrimary.groups[ids.subgroup].x &&
+        state.groups[ids.subgroup]?.y === beforeGroupPrimary.groups[ids.subgroup].y
+        ? state
+        : false;
+    }, "One Ctrl+Z did not restore the complete group-primary mixed move.");
+    const groupPrimaryUndone = await canvasState(page);
+    assertUnmoved(beforeGroupPrimary, groupPrimaryUndone, "landmarks", [
+      ids.a,
+      ids.b,
+      ids.c,
+      ids.d,
+      ids.corner,
+      ids.overlap,
+      ids.content,
+    ]);
+    assertUnmoved(beforeGroupPrimary, groupPrimaryUndone, "groups", [
+      ids.subject,
+      ids.group,
+      ids.subgroup,
+      ids.overlapGroup,
+    ]);
+  });
+
   await scenario("right-click selection menu placement and Escape", async () => {
     const bounds = await landmark(page, ids.b).boundingBox();
     assert(bounds, "The right-click landmark is not visible.");
@@ -1628,7 +2125,10 @@ try {
     await page.mouse.up();
     await page.waitForTimeout(150);
     after = await canvasState(page);
-    assert(after.customConnections.length === 0, "Escape cancellation committed a stray connection.");
+    assert(
+      after.customConnections.length === fixture.customConnections.length,
+      "Escape cancellation committed a stray connection.",
+    );
     assertUnmoved(before, after, "groups", [ids.subject, ids.group, ids.subgroup]);
     assertUnmoved(before, after, "landmarks", [ids.a, ids.b, ids.c, ids.d]);
   });
@@ -1661,7 +2161,10 @@ try {
     await dragFrom(page, portPoint, { x: portPoint.x + 70, y: portPoint.y + 45 });
     await page.waitForTimeout(100);
     let after = await canvasState(page);
-    assert(after.customConnections.length === 0, "A blank-space port drag created a connection.");
+    assert(
+      after.customConnections.length === fixture.customConnections.length,
+      "A blank-space port drag created a connection.",
+    );
     assertUnmoved(before, after, "landmarks", [ids.a, ids.b, ids.c, ids.d]);
     assertUnmoved(before, after, "groups", [ids.subject, ids.group, ids.subgroup]);
     // Move off the enlarged port acquisition disc before probing the same
@@ -1850,7 +2353,7 @@ try {
     // a landmark that was near the former right edge. Hide it without a
     // synthetic pointer-down so the contextual picker stays open, then verify
     // the actual canvas preview rather than only the palette state.
-    const hideInspector = page.getByRole("button", { name: "Hide note sidebar", exact: true });
+    const hideInspector = page.getByRole("button", { name: "Close note sidebar", exact: true });
     if (await hideInspector.count()) {
       await hideInspector.evaluate((button) => button.click());
       await landmark(page, ids.content).waitFor({ timeout: 12_000 });
@@ -2087,6 +2590,8 @@ console.log(`[verify:canvas-stress] Resize cancellation: ${resizeCancelScreensho
 console.log(`[verify:canvas-stress] Content frame: ${contentFrameScreenshot}`);
 console.log(`[verify:canvas-stress] Formula picker: ${formulaPickerScreenshot}`);
 console.log(`[verify:canvas-stress] Far-zoom content: ${contentZoomScreenshot}`);
+console.log(`[verify:canvas-stress] Group boundaries at far zoom: ${groupBoundaryZoomScreenshot}`);
+console.log(`[verify:canvas-stress] Mixed-selection drag: ${mixedSelectionDragScreenshot}`);
 if (failures.length) {
   throw new Error(`Canvas usability stress failures:\n${failures.map(({ name, error, evidence }) =>
     `- ${name}: ${error}\n  ${evidence}`

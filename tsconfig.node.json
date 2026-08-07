@@ -14,6 +14,7 @@
     "scripts/content-api-plugin.ts",
     "scripts/atlas-api-plugin.ts",
     "scripts/asset-api-plugin.ts",
-    "src/domain/atlasMetadata.ts"
+    "src/domain/atlasMetadata.ts",
+    "src/domain/subjectFrameStyle.ts"
   ]
 }
